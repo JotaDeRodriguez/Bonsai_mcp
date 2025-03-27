@@ -208,6 +208,7 @@ class BlenderMCPServer:
                 "get_ifc_properties": self.get_ifc_properties,
                 "get_ifc_spatial_structure": self.get_ifc_spatial_structure,
                 "get_ifc_relationships": self.get_ifc_relationships,
+                "get_selected_ifc_entities": self.get_selected_ifc_entities,
             }
         
 
@@ -236,6 +237,49 @@ class BlenderMCPServer:
             return {"executed": True}
         except Exception as e:
             raise Exception(f"Code execution error: {str(e)}")
+        
+
+    @staticmethod
+    def get_selected_ifc_entities():
+        """
+        Get the IFC entities corresponding to the currently selected Blender objects.
+        
+        Returns:
+            List of IFC entities for the selected objects
+        """
+        try:
+            file = IfcStore.get_file()
+            if file is None:
+                return {"error": "No IFC file is currently loaded"}
+            
+            # Get currently selected objects
+            selected_objects = bpy.context.selected_objects
+            if not selected_objects:
+                return {"selected_count": 0, "message": "No objects selected in Blender"}
+            
+            # Collect IFC entities from selected objects
+            selected_entities = []
+            for obj in selected_objects:
+                if hasattr(obj, "BIMObjectProperties") and obj.BIMObjectProperties.ifc_definition_id:
+                    entity_id = obj.BIMObjectProperties.ifc_definition_id
+                    entity = file.by_id(entity_id)
+                    if entity:
+                        entity_info = {
+                            "id": entity.GlobalId if hasattr(entity, "GlobalId") else f"Entity_{entity.id()}",
+                            "ifc_id": entity.id(),
+                            "type": entity.is_a(),
+                            "name": entity.Name if hasattr(entity, "Name") else None,
+                            "blender_name": obj.name
+                        }
+                        selected_entities.append(entity_info)
+            
+            return {
+                "selected_count": len(selected_entities),
+                "selected_entities": selected_entities
+            }
+        except Exception as e:
+            import traceback
+            return {"error": str(e), "traceback": traceback.format_exc()}
         
     ### SPECIFIC IFC METHODS ###
         
@@ -279,7 +323,7 @@ class BlenderMCPServer:
             return {"error": str(e), "traceback": traceback.format_exc()}
 
     @staticmethod
-    def list_ifc_entities(entity_type=None, limit=50):
+    def list_ifc_entities(entity_type=None, limit=50, selected_only=False):
         """
         List IFC entities of a specific type.
         
@@ -295,6 +339,49 @@ class BlenderMCPServer:
             if file is None:
                 return {"error": "No IFC file is currently loaded"}
             
+            # If we're only looking at selected objects
+            if selected_only:
+                selected_result = BlenderMCPServer.get_selected_ifc_entities()
+                
+                # Check for errors
+                if "error" in selected_result:
+                    return selected_result
+                    
+                # If no objects are selected, return early
+                if selected_result["selected_count"] == 0:
+                    return selected_result
+                    
+                # If entity_type is specified, filter the selected entities
+                if entity_type:
+                    filtered_entities = [
+                        entity for entity in selected_result["selected_entities"]
+                        if entity["type"] == entity_type
+                    ]
+                    
+                    return {
+                        "type": entity_type,
+                        "selected_count": len(filtered_entities),
+                        "entities": filtered_entities[:limit]
+                    }
+                else:
+                    # Group selected entities by type
+                    entity_types = {}
+                    for entity in selected_result["selected_entities"]:
+                        entity_type = entity["type"]
+                        if entity_type in entity_types:
+                            entity_types[entity_type].append(entity)
+                        else:
+                            entity_types[entity_type] = [entity]
+                    
+                    return {
+                        "selected_count": selected_result["selected_count"],
+                        "entity_types": [
+                            {"type": t, "count": len(entities), "entities": entities[:limit]}
+                            for t, entities in entity_types.items()
+                        ]
+                    }
+            
+            # Original functionality for non-selected mode
             if not entity_type:
                 # If no type specified, list available entity types
                 entity_types = {}
@@ -337,7 +424,7 @@ class BlenderMCPServer:
             return {"error": str(e), "traceback": traceback.format_exc()}
 
     @staticmethod
-    def get_ifc_properties(global_id):
+    def get_ifc_properties(global_id=None, selected_only=False):
         """
         Get all properties of a specific IFC entity.
         
@@ -352,26 +439,73 @@ class BlenderMCPServer:
             if file is None:
                 return {"error": "No IFC file is currently loaded"}
             
-            # Find entity by GlobalId
-            entity = file.by_guid(global_id)
-            if not entity:
-                return {"error": f"No entity found with GlobalId: {global_id}"}
-            
-            # Get basic entity info
-            entity_info = {
-                "id": entity.GlobalId,
-                "type": entity.is_a(),
-                "name": entity.Name if hasattr(entity, "Name") else None,
-                "description": entity.Description if hasattr(entity, "Description") else None,
-                "property_sets": {}
-            }
-            
-            # Get all property sets
-            psets = ifcopenshell.util.element.get_psets(entity)
-            for pset_name, pset_data in psets.items():
-                entity_info["property_sets"][pset_name] = pset_data
-            
-            return entity_info
+            # If we're only looking at selected objects
+            if selected_only:
+                selected_result = BlenderMCPServer.get_selected_ifc_entities()
+                
+                # Check for errors
+                if "error" in selected_result:
+                    return selected_result
+                
+                # If no objects are selected, return early
+                if selected_result["selected_count"] == 0:
+                    return selected_result
+                
+                # Process each selected entity
+                result = {
+                    "selected_count": selected_result["selected_count"],
+                    "entities": []
+                }
+                
+                for entity_info in selected_result["selected_entities"]:
+                    # Find entity by GlobalId
+                    entity = file.by_guid(entity_info["id"])
+                    if not entity:
+                        continue
+                    
+                    # Get basic entity info
+                    entity_data = {
+                        "id": entity.GlobalId,
+                        "type": entity.is_a(),
+                        "name": entity.Name if hasattr(entity, "Name") else None,
+                        "description": entity.Description if hasattr(entity, "Description") else None,
+                        "blender_name": entity_info["blender_name"],
+                        "property_sets": {}
+                    }
+                    
+                    # Get all property sets
+                    psets = ifcopenshell.util.element.get_psets(entity)
+                    for pset_name, pset_data in psets.items():
+                        entity_data["property_sets"][pset_name] = pset_data
+                    
+                    result["entities"].append(entity_data)
+                
+                return result
+                
+            # If we're looking at a specific entity
+            elif global_id:
+                # Find entity by GlobalId
+                entity = file.by_guid(global_id)
+                if not entity:
+                    return {"error": f"No entity found with GlobalId: {global_id}"}
+                
+                # Get basic entity info
+                entity_info = {
+                    "id": entity.GlobalId,
+                    "type": entity.is_a(),
+                    "name": entity.Name if hasattr(entity, "Name") else None,
+                    "description": entity.Description if hasattr(entity, "Description") else None,
+                    "property_sets": {}
+                }
+                
+                # Get all property sets
+                psets = ifcopenshell.util.element.get_psets(entity)
+                for pset_name, pset_data in psets.items():
+                    entity_info["property_sets"][pset_name] = pset_data
+                
+                return entity_info
+            else:
+                return {"error": "Either global_id or selected_only must be specified"}
         except Exception as e:
             import traceback
             return {"error": str(e), "traceback": traceback.format_exc()}
