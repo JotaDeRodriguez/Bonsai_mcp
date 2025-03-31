@@ -10,6 +10,7 @@ import traceback
 import os
 import shutil
 from bpy.props import StringProperty, IntProperty, BoolProperty, EnumProperty
+import base64
 
 import bpy
 
@@ -202,14 +203,16 @@ class BlenderMCPServer:
         
         # Base handlers that are always available
         handlers = {
-                "execute_code": self.execute_code,
-                "get_ifc_project_info": self.get_ifc_project_info,
-                "list_ifc_entities": self.list_ifc_entities,
-                "get_ifc_properties": self.get_ifc_properties,
-                "get_ifc_spatial_structure": self.get_ifc_spatial_structure,
-                "get_ifc_relationships": self.get_ifc_relationships,
-                "get_selected_ifc_entities": self.get_selected_ifc_entities,
-            }
+            "execute_code": self.execute_code,
+            "get_ifc_project_info": self.get_ifc_project_info,
+            "list_ifc_entities": self.list_ifc_entities,
+            "get_ifc_properties": self.get_ifc_properties,
+            "get_ifc_spatial_structure": self.get_ifc_spatial_structure,
+            "get_ifc_relationships": self.get_ifc_relationships,
+            "get_selected_ifc_entities": self.get_selected_ifc_entities,
+            "get_current_view": self.get_current_view,
+            "create_orthographic_render": self.create_orthographic_render
+        }
         
 
         handler = handlers.get(cmd_type)
@@ -641,6 +644,57 @@ class BlenderMCPServer:
         except Exception as e:
             import traceback
             return {"error": str(e), "traceback": traceback.format_exc()}
+        
+    
+    ### Ability to see
+    @staticmethod
+    def get_current_view():
+        """Capture and return the current viewport as an image"""
+        try:
+            # Find a 3D View
+            for area in bpy.context.screen.areas:
+                if area.type == 'VIEW_3D':
+                    break
+            else:
+                return {"error": "No 3D View available"}
+            
+            # Create temporary file to save the viewport screenshot
+            temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            temp_path = temp_file.name
+            temp_file.close()
+            
+            # Find appropriate region
+            for region in area.regions:
+                if region.type == 'WINDOW':
+                    break
+            else:
+                return {"error": "No appropriate region found in 3D View"}
+            
+            # Use temp_override instead of the old override dictionary
+            with bpy.context.temp_override(area=area, region=region):
+                # Save screenshot
+                bpy.ops.screen.screenshot(filepath=temp_path)
+            
+            # Read the image data and encode as base64
+            with open(temp_path, 'rb') as f:
+                image_data = f.read()
+            
+            # Clean up
+            os.unlink(temp_path)
+            
+            # Return base64 encoded image
+            return {
+                "width": area.width,
+                "height": area.height,
+                "format": "png",
+                "data": base64.b64encode(image_data).decode('utf-8')
+            }
+        except Exception as e:
+            import traceback
+            return {"error": str(e), "traceback": traceback.format_exc()}
+
+
+
     #endregion
 
 # Blender UI Panel

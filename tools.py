@@ -516,6 +516,88 @@ def get_ifc_relationships(global_id: str) -> str:
         return f"Error getting IFC relationships: {str(e)}"
     
 
+
+@mcp.tool()
+def get_user_view() -> Image:
+    """
+    Capture and return the current Blender viewport as an image.
+    Shows what the user is currently seeing in Blender.
+
+    Focus mostly on the 3D viewport. Use the UI to assist in your understanding of the scene but only refer to it if specifically prompted.
+
+    
+    Returns:
+        An image of the current Blender viewport
+    """
+    try:
+        # Get the global connection
+        blender = get_blender_connection()
+        
+        # Request current view
+        result = blender.send_command("get_current_view")
+        
+        if "error" in result:
+            raise Exception(f"Error getting current view: {result.get('error', 'Unknown error')}")
+        
+        if "data" not in result:
+            raise Exception("No image data returned from Blender")
+        
+        # Decode the base64 image data
+        image_data = base64.b64decode(result["data"])
+        
+        # Return as an Image object
+        return Image(data=image_data, format="png")
+    except Exception as e:
+        logger.error(f"Error getting current view: {str(e)}")
+        raise Exception(f"Error getting current view: {str(e)}")
+
+
+# WIP, not ready to be implemented:  
+# @mcp.tool()
+# def create_plan_view(height_offset: float = 0.5, view_type: str = "top", 
+#                     resolution_x: int = 400, resolution_y: int = 400,
+#                     output_path: str = None) -> Image:
+#     """
+#     Create a plan view (top-down view) at the specified height above the first building story.
+    
+#     Args:
+#         height_offset: Height in meters above the building story (default 0.5m)
+#         view_type: Type of view - "top", "front", "right", "left" (note: only "top" is fully implemented)
+#         resolution_x: Horizontal resolution of the render in pixels - Keep it small, max 800 x 800, recomended 400 x 400
+#         resolution_y: Vertical resolution of the render in pixels
+#         output_path: Optional path to save the rendered image
+    
+#     Returns:
+#         A rendered image showing the plan view of the model
+#     """
+#     try:
+#         # Get the global connection
+#         blender = get_blender_connection()
+        
+#         # Request an orthographic render
+#         result = blender.send_command("create_orthographic_render", {
+#             "view_type": view_type,
+#             "height_offset": height_offset,
+#             "resolution_x": resolution_x,
+#             "resolution_y": resolution_y,
+#             "output_path": output_path  # Can be None to use a temporary file
+#         })
+        
+#         if "error" in result:
+#             raise Exception(f"Error creating plan view: {result.get('error', 'Unknown error')}")
+        
+#         if "data" not in result:
+#             raise Exception("No image data returned from Blender")
+        
+#         # Decode the base64 image data
+#         image_data = base64.b64decode(result["data"])
+        
+#         # Return as an Image object
+#         return Image(data=image_data, format="png")
+#     except Exception as e:
+#         logger.error(f"Error creating plan view: {str(e)}")
+#         raise Exception(f"Error creating plan view: {str(e)}")
+
 @mcp.tool()
 def sequentialthinking(
     thought: str,
