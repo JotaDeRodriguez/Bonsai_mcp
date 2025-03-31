@@ -180,3 +180,4 @@ The IFC integration uses the Bonsai BIM module to access ifcopenshell functional
 
 ## TODO
 Cursor implementation
+Add 'get_selected_ifc_elements' description
