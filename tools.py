@@ -203,7 +203,6 @@ mcp = FastMCP(
 
 # Global connection for resources (since resources can't access context)
 _blender_connection = None
-_polyhaven_enabled = False  # Add this global variable
 
 def get_blender_connection():
     """Get or create a persistent Blender connection"""
@@ -524,11 +523,21 @@ def get_user_view() -> Image:
     Shows what the user is currently seeing in Blender.
 
     Focus mostly on the 3D viewport. Use the UI to assist in your understanding of the scene but only refer to it if specifically prompted.
-
+    
+    Args:
+        max_dimension: Maximum dimension (width or height) in pixels for the returned image
+        compression_quality: Image compression quality (1-100, higher is better quality but larger)
     
     Returns:
         An image of the current Blender viewport
     """
+    max_dimension = 800
+    compression_quality = 85
+
+    # Use PIL to compress the image
+    from PIL import Image as PILImage
+    import io
+
     try:
         # Get the global connection
         blender = get_blender_connection()
@@ -537,19 +546,63 @@ def get_user_view() -> Image:
         result = blender.send_command("get_current_view")
         
         if "error" in result:
-            raise Exception(f"Error getting current view: {result.get('error', 'Unknown error')}")
+            # logger.error(f"Error getting view from Blender: {result.get('error')}")
+            raise Exception(f"Error getting current view: {result.get('error')}")
         
-        if "data" not in result:
-            raise Exception("No image data returned from Blender")
+        # Extract image information
+        if "data" not in result or "width" not in result or "height" not in result:
+            # logger.error("Incomplete image data returned from Blender")
+            raise Exception("Incomplete image data returned from Blender")
         
         # Decode the base64 image data
         image_data = base64.b64decode(result["data"])
+        original_width = result["width"]
+        original_height = result["height"]
+        original_format = result.get("format", "png")
         
-        # Return as an Image object
-        return Image(data=image_data, format="png")
+        # Compression is only needed if the image is large
+        if original_width > 800 or original_height > 800 or len(image_data) > 1000000:
+            # logger.info(f"Compressing image (original size: {len(image_data)} bytes)")
+            
+
+            
+            # Open image from binary data
+            img = PILImage.open(io.BytesIO(image_data))
+            
+            # Resize if needed
+            if original_width > max_dimension or original_height > max_dimension:
+                # Calculate new dimensions maintaining aspect ratio
+                if original_width > original_height:
+                    new_width = max_dimension
+                    new_height = int(original_height * (max_dimension / original_width))
+                else:
+                    new_height = max_dimension
+                    new_width = int(original_width * (max_dimension / original_height))
+                
+                # Resize using high-quality resampling
+                img = img.resize((new_width, new_height), PILImage.LANCZOS)
+            
+            # Convert to RGB if needed
+            if img.mode == 'RGBA':
+                img = img.convert('RGB')
+            
+            # Save as JPEG with compression
+            output = io.BytesIO()
+            img.save(output, format='JPEG', quality=compression_quality, optimize=True)
+            compressed_data = output.getvalue()
+            
+            # logger.info(f"Image compressed from {len(image_data)} to {len(compressed_data)} bytes")
+            
+            # Return compressed image
+            return Image(data=compressed_data, format="jpeg")
+        else:
+            # Image is small enough, return as-is
+            return Image(data=image_data, format=original_format)
+            
     except Exception as e:
-        logger.error(f"Error getting current view: {str(e)}")
-        raise Exception(f"Error getting current view: {str(e)}")
+        # logger.error(f"Error processing viewport image: {str(e)}")
+        raise Exception(f"Error processing viewport image: {str(e)}")
+
 
 
 # WIP, not ready to be implemented:  
