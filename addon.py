@@ -211,7 +211,8 @@ class BlenderMCPServer:
             "get_ifc_relationships": self.get_ifc_relationships,
             "get_selected_ifc_entities": self.get_selected_ifc_entities,
             "get_current_view": self.get_current_view,
-            "create_orthographic_render": self.create_orthographic_render
+            "export_ifc_data": self.export_ifc_data,
+            "place_ifc_object": self.place_ifc_object,
         }
         
 
@@ -645,7 +646,244 @@ class BlenderMCPServer:
             import traceback
             return {"error": str(e), "traceback": traceback.format_exc()}
         
+
+    @staticmethod
+    def export_ifc_data(entity_type=None, level_name=None, output_format="csv"):
+        """Export IFC data to a structured file"""
+        try:
+            file = IfcStore.get_file()
+            if file is None:
+                return {"error": "No IFC file is currently loaded"}
+            
+            data_list = []
+            
+            # Filter objects based on type
+            if entity_type:
+                objects = file.by_type(entity_type)
+            else:
+                objects = file.by_type("IfcElement")
+            
+            # Create a data dictionary for each object
+            for obj in objects:
+                obj_data = {}
+                
+                # Get level/storey information
+                container_level = None
+                try:
+                    containing_structure = ifcopenshell.util.element.get_container(obj)
+                    if containing_structure and containing_structure.is_a("IfcBuildingStorey"):
+                        container_level = containing_structure.Name
+                except Exception as e:
+                    pass
+                
+                # Skip if we're filtering by level and this doesn't match
+                if level_name and container_level != level_name:
+                    continue
+                    
+                # Basic information
+                obj_data['ExpressId'] = obj.id()
+                obj_data['GlobalId'] = obj.GlobalId if hasattr(obj, "GlobalId") else None
+                obj_data['IfcClass'] = obj.is_a()
+                obj_data['Name'] = obj.Name if hasattr(obj, "Name") else None
+                obj_data['Description'] = obj.Description if hasattr(obj, "Description") else None
+                obj_data['LevelName'] = container_level
+                
+                # Get predefined type if available
+                try:
+                    obj_data['PredefinedType'] = ifcopenshell.util.element.get_predefined_type(obj)
+                except:
+                    obj_data['PredefinedType'] = None
+                    
+                # Get type information
+                try:
+                    type_obj = ifcopenshell.util.element.get_type(obj)
+                    obj_data['TypeName'] = type_obj.Name if type_obj and hasattr(type_obj, "Name") else None
+                    obj_data['TypeClass'] = type_obj.is_a() if type_obj else None
+                except:
+                    obj_data['TypeName'] = None
+                    obj_data['TypeClass'] = None
+                
+                # Get property sets (simplify structure for export)
+                try:
+                    property_sets = ifcopenshell.util.element.get_psets(obj)
+                    # Flatten property sets for better export compatibility
+                    for pset_name, pset_data in property_sets.items():
+                        for prop_name, prop_value in pset_data.items():
+                            obj_data[f"{pset_name}.{prop_name}"] = prop_value
+                except Exception as e:
+                    pass
+                    
+                data_list.append(obj_data)
+            
+            if not data_list:
+                return "No data found matching the specified criteria"
+            
+            # Determine output directory - try multiple options to ensure it works in various environments
+            output_dirs = [
+                "C:\\Users\\Public\\Documents" if os.name == "nt" else None,  # Public Documents
+                "/usr/share" if os.name != "nt" else None,  # Unix share directory
+                "/tmp",  # Unix temp directory
+                "C:\\Temp" if os.name == "nt" else None,  # Windows temp directory
+            ]
+            
+            output_dir = None
+            for dir_path in output_dirs:
+                if dir_path and os.path.exists(dir_path) and os.access(dir_path, os.W_OK):
+                    output_dir = dir_path
+                    break
+                    
+            if not output_dir:
+                return {"error": "Could not find a writable directory for output"}
+            
+            # Create filename based on filters
+            filters = []
+            if entity_type:
+                filters.append(entity_type)
+            if level_name:
+                filters.append(level_name)
+            filter_str = "_".join(filters) if filters else "all"
+            
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"ifc_export_{filter_str}_{timestamp}.{output_format}"
+            filepath = os.path.join(output_dir, filename)
+            
+            # Export based on format
+            if output_format == "json":
+                with open(filepath, 'w') as f:
+                    json.dump(data_list, f, indent=2)
+            elif output_format == "csv":
+                import pandas as pd
+                df = pd.DataFrame(data_list)
+                df.to_csv(filepath, index=False)
+            
+            # Summary info for the response
+            entity_count = len(data_list)
+            entity_types = set(item['IfcClass'] for item in data_list)
+            levels = set(item['LevelName'] for item in data_list if item['LevelName'])
+            
+            return {
+                "success": True,
+                "message": f"Data exported successfully to {filepath}",
+                "filepath": filepath,
+                "format": output_format,
+                "summary": {
+                    "entity_count": entity_count,
+                    "entity_types": list(entity_types),
+                    "levels": list(levels)
+                }
+            }
+        
+        except Exception as e:
+            import traceback
+            return {"error": str(e), "traceback": traceback.format_exc()}
+        
     
+    @staticmethod
+    def place_ifc_object(type_name, location, rotation=None):
+        """
+        Place an IFC object at specified location with optional rotation
+        
+        Args:
+            type_name: Name of the IFC element type
+            location: [x, y, z] list or tuple for position
+            rotation: Value in degrees for rotation around Z axis (optional)
+        
+        Returns:
+            Dictionary with information about the created object
+        """
+        try:
+            import ifcopenshell
+            from bonsai.bim.ifc import IfcStore
+            import math
+            
+            # Convert location to tuple if it's not already
+            if isinstance(location, list):
+                location = tuple(location)
+                
+            def find_type_by_name(name):
+                file = IfcStore.get_file()
+                for element in file.by_type("IfcElementType"):
+                    if element.Name == name:
+                        return element.id()
+                return None
+
+            # Find the type ID
+            type_id = find_type_by_name(type_name)
+            if not type_id:
+                return {"error": f"Type '{type_name}' not found. Please check if this type exists in the model."}
+                
+            # Store original context
+            original_context = bpy.context.copy()
+            
+            # Ensure we're in 3D View context
+            override = bpy.context.copy()
+            for area in bpy.context.screen.areas:
+                if area.type == 'VIEW_3D':
+                    override["area"] = area
+                    override["region"] = area.regions[-1]
+                    break
+            
+            # Set cursor location
+            bpy.context.scene.cursor.location = location
+            
+            # Get properties to set up parameters
+            props = bpy.context.scene.BIMModelProperties
+            
+            # Store original rl_mode and set to CURSOR to use cursor's Z position
+            original_rl_mode = props.rl_mode
+            props.rl_mode = 'CURSOR'
+            
+            # Create the object using the override context
+            with bpy.context.temp_override(**override):
+                bpy.ops.bim.add_occurrence(relating_type_id=type_id)
+            
+            # Get the newly created object
+            obj = bpy.context.active_object
+            if not obj:
+                props.rl_mode = original_rl_mode
+                return {"error": "Failed to create object"}
+            
+            # Force the Z position explicitly
+            obj.location.z = location[2]
+            
+            # Apply rotation if provided
+            if rotation is not None:
+                # Convert degrees to radians for Blender's rotation_euler
+                full_rotation = (0, 0, math.radians(float(rotation)))
+                obj.rotation_euler = full_rotation
+            
+            # Sync the changes back to IFC
+            # Use the appropriate method depending on what's available
+            if hasattr(bpy.ops.bim, "update_representation"):
+                bpy.ops.bim.update_representation(obj=obj.name)
+            
+            # Restore original rl_mode
+            props.rl_mode = original_rl_mode
+            
+            # Get the IFC entity for the new object
+            entity_id = obj.BIMObjectProperties.ifc_definition_id
+            if entity_id:
+                file = IfcStore.get_file()
+                entity = file.by_id(entity_id)
+                global_id = entity.GlobalId if hasattr(entity, "GlobalId") else None
+            else:
+                global_id = None
+            
+            # Return information about the created object
+            return {
+                "success": True,
+                "blender_name": obj.name,
+                "global_id": global_id,
+                "location": list(obj.location),
+                "rotation": list(obj.rotation_euler),
+                "type_name": type_name
+            }
+            
+        except Exception as e:
+            import traceback
+            return {"error": str(e), "traceback": traceback.format_exc()}
+    
+
     ### Ability to see
     @staticmethod
     def get_current_view():
@@ -789,10 +1027,6 @@ def unregister():
     
     del bpy.types.Scene.blendermcp_port
     del bpy.types.Scene.blendermcp_server_running
-    del bpy.types.Scene.blendermcp_use_polyhaven
-    del bpy.types.Scene.blendermcp_use_hyper3d
-    del bpy.types.Scene.blendermcp_hyper3d_mode
-    del bpy.types.Scene.blendermcp_hyper3d_api_key
 
     print("BlenderMCP addon unregistered")
 

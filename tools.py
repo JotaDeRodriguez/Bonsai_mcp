@@ -194,8 +194,8 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 
 # Create the MCP server with lifespan support
 mcp = FastMCP(
-    "BlenderMCP",
-    description="Blender integration through the Model Context Protocol",
+    "Bonsai MCP",
+    description="IFC manipulation through Blender and MCP",
     lifespan=server_lifespan
 )
 
@@ -206,15 +206,13 @@ _blender_connection = None
 
 def get_blender_connection():
     """Get or create a persistent Blender connection"""
-    global _blender_connection, _polyhaven_enabled  # Add _polyhaven_enabled to globals
+    global _blender_connection
     
     # If we have an existing connection, check if it's still valid
     if _blender_connection is not None:
         try:
-            # First check if PolyHaven is enabled by sending a ping command
-            result = _blender_connection.send_command("get_polyhaven_status")
-            # Store the PolyHaven status globally
-            _polyhaven_enabled = result.get("enabled", False)
+            # Simple ping to check if connection is still alive
+            _blender_connection.send_command("get_ifc_project_info")
             return _blender_connection
         except Exception as e:
             # Connection is dead, close it and create a new one
@@ -515,7 +513,108 @@ def get_ifc_relationships(global_id: str) -> str:
         return f"Error getting IFC relationships: {str(e)}"
     
 
+@mcp.tool()
+def export_ifc_data(
+    entity_type: str = None, 
+    level_name: str = None, 
+    output_format: str = "csv",
+    ctx: Context = None
+) -> str:
+    """
+    Export IFC data to a file in JSON or CSV format.
+    
+    This tool extracts IFC data and creates a structured export file. You can filter
+    by entity type and/or building level, and choose the output format.
+    
+    Args:
+        entity_type: Type of IFC entity to export (e.g., "IfcWall") - leave empty for all entities
+        level_name: Name of the building level to filter by (e.g., "Level 1") - leave empty for all levels
+        output_format: "json" or "csv" format for the output file
+        
+    Returns:
+        Confirmation message with the export file path or an error message
+    """
+    try:
+        # Get Blender connection
+        blender = get_blender_connection()
 
+        # Validate output format
+        if output_format not in ["json", "csv"]:
+            return "Error: output_format must be 'json' or 'csv'"
+
+        # Execute the export code in Blender
+        result = blender.send_command("export_ifc_data", {
+            "entity_type": entity_type,
+            "level_name": level_name,
+            "output_format": output_format
+        })
+        
+        # Check for errors from Blender
+        if isinstance(result, dict) and "error" in result:
+            return f"Error: {result['error']}"
+        
+        # Return the result with export summary
+        return result
+    except Exception as e:
+        logger.error(f"Error exporting IFC data: {str(e)}")
+        return f"Error exporting IFC data: {str(e)}"
+    
+
+@mcp.tool()
+def place_ifc_object(
+    type_name: str, 
+    x: float, 
+    y: float, 
+    z: float, 
+    rotation: float = 0.0,
+    ctx: Context = None
+) -> str:
+    """
+    Place an IFC object at a specified location with optional rotation.
+    
+    This tool allows you to create and position IFC elements in the model.
+    The object is placed using the specified IFC type and positioned
+    at the given coordinates with optional rotation around the Z axis.
+    
+    Args:
+        type_name: Name of the IFC element type to place (must exist in the model)
+        x: X-coordinate in model space
+        y: Y-coordinate in model space
+        z: Z-coordinate in model space
+        rotation: Rotation angle in degrees around the Z axis (default: 0)
+        
+    Returns:
+        A message with the result of the placement operation
+    """
+    try:
+        # Get Blender connection
+        blender = get_blender_connection()
+        
+        # Send command to place the object
+        result = blender.send_command("place_ifc_object", {
+            "type_name": type_name,
+            "location": [x, y, z],
+            "rotation": rotation
+        })
+        
+        # Check for errors
+        if isinstance(result, dict) and "error" in result:
+            return f"Error placing object: {result['error']}"
+        
+        # Format success message
+        if isinstance(result, dict) and result.get("success"):
+            return (f"Successfully placed '{type_name}' object at ({x}, {y}, {z}) "
+                   f"with {rotation}° rotation.\nObject name: {result.get('blender_name')}, "
+                   f"Global ID: {result.get('global_id')}")
+        
+        # Return the raw result as string if it's not a success or error dict
+        return f"Placement result: {json.dumps(result, indent=2)}"
+    
+    except Exception as e:
+        logger.error(f"Error placing IFC object: {str(e)}")
+        return f"Error placing IFC object: {str(e)}"
+    
+    
 @mcp.tool()
 def get_user_view() -> Image:
     """
