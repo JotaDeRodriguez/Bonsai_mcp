@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/jotaderodriguez-bonsai-mcp-badge.png)](https://mseep.ai/app/jotaderodriguez-bonsai-mcp)
+
 
 # Bonsai-mcp - Model Context Protocol Integration for IFC through IfcOpenShell and Blender
 
