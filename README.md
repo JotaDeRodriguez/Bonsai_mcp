@@ -1,9 +1,10 @@
-
 # Bonsai-mcp - Model Context Protocol Integration for IFC through IfcOpenShell and Blender
 
-  
+Bonsai-mcp is a fork of [BlenderMCP](https://github.com/ahujasid/blender-mcp) that extends the original functionality with dedicated support for IFC (Industry Foundation Classes) models through Bonsai (previously called BlenderBIM). This integration is a platform to let LLMs read and modify IFC files.
 
-Bonsai-mcp is a fork of [BlenderMCP](https://github.com/ahujasid/blender-mcp) that extends the original functionality with dedicated support for IFC (Industry Foundation Classes) models through Bonsai (previously called BlenderBIM). This integration is a platform to let LLMs read and modify IFC files. 
+<a href="https://glama.ai/mcp/servers/@JotaDeRodriguez/Bonsai_mcp">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@JotaDeRodriguez/Bonsai_mcp/badge" alt="Bonsai-mcp MCP server" />
+</a>
 
 ## Features
 
@@ -15,28 +16,17 @@ Bonsai-mcp is a fork of [BlenderMCP](https://github.com/ahujasid/blender-mcp) th
 
 -  **Execute Code tool from the original BlenderMCP implementation**: Create and modify objects, apply materials, and execute Python code in Blender
 
-  
-
 ## Components
 
-
 The system consists of two main components:
-
-  
 
 1.  **Blender Addon (`addon.py`)**: A Blender addon that creates a socket server within Blender to receive and execute commands, including IFC-specific operations
 
 2.  **MCP Server (`tools.py`)**: A Python server that implements the Model Context Protocol and connects to the Blender addon
 
-  
-
 ## Installation - Through MCP Client Settings
 
-  
-
 ### Prerequisites
-
-  
 
 - Blender 4.0 or newer
 
@@ -46,60 +36,34 @@ The system consists of two main components:
 
 - Bonsai BIM addon for Blender (for IFC functionality)
 
-  
-
 **Installing uv:**
-
-  
 
 **Mac:**
 
 ```bash
-
 brew  install  uv
-
 ```
-
-  
 
 **Windows:**
 
 ```bash
-
 powershell  -c  "irm https://astral.sh/uv/install.ps1 | iex"
-
 set  Path=C:\Users\[username]\.local\bin;%Path%
-
 ```
-
-  
 
 For other platforms, see the [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/).
 
-  
-
 ### Clone the repository
 
-  
-
 ```bash
-
 git  clone  https://github.com/JotaDeRodriguez/Bonsai_mcp
-
 ```
-
-  
 
 ### Claude for Desktop Integration
 
-  
-
 Edit your `claude_desktop_config.json` file (Claude > Settings > Developer > Edit Config) to include:
 
-  
-
 ```json
-
 {
     "mcpServers": {
         "Bonsai-mcp": {
@@ -113,7 +77,6 @@ Edit your `claude_desktop_config.json` file (Claude > Settings > Developer > Edi
         }
     }
 }
-
 ```
 
 ## Installation via Docker
@@ -133,7 +96,7 @@ docker run -p 8000:8000 --name bonsai_mcp bonsai_mcp
 ```
 Once running, the container will expose the MCP tools as REST/OpenAPI APIs at `http://localhost:8000`.
 
-- To verify youtr installation, open your browser and navigate to
+- To verify your installation, open your browser and navigate to
 - `http://localhost:8000/docs`
 -   You'll see the Swagger UI with all available endpoints
 -   Test an endpoint by clicking on it, then click "Try it out" and "Execute"
@@ -147,7 +110,7 @@ To connect this API to Open WebUI:
     -   URL: `http://localhost:8000`
     -   Path to OpenAPI spec: `/openapi.json`
     -   Authentication: None (unless configured otherwise)
-    - 
+
 ### Environment Variables
 The Docker container accepts several environment variables to customize its behavior:
 ```bash
@@ -159,7 +122,6 @@ docker run -p 8000:8000 \
   -e MCP_PORT=8000 \
   --name bonsai_mcp bonsai_mcp
 ```
-   
 
 ## Installing the Blender Addon
 
@@ -173,15 +135,9 @@ docker run -p 8000:8000 \
 
 5. Enable the addon by checking the box next to "Interface: Blender MCP - IFC"
 
-  
-
 ## Usage
 
-  
-
 ### Starting the Connection
-
-  
 
 1. In Blender, go to the 3D View sidebar (press N if not visible)
 
@@ -191,16 +147,9 @@ docker run -p 8000:8000 \
 
 4. Make sure the MCP server is running
 
-  
-
 ### Using with Claude
 
-  
-
 Once connected, you'll see a hammer icon in Claude's interface with tools for the Blender MCP IFC integration.
-
-  
-
 
 ## IFC Tools
 
@@ -234,15 +183,9 @@ This integration includes the Sequential Thinking tool for structured problem-so
 
 Example: "Use sequential thinking to analyze this building's energy efficiency based on the IFC model"
 
-  
-
 ## Example Commands
 
-  
-
 Here are some examples of what you can ask Claude to do with IFC models:
-
-  
 
 - "Analyze this IFC model and tell me how many walls, doors and windows it has"
 
@@ -256,9 +199,6 @@ Here are some examples of what you can ask Claude to do with IFC models:
 
 - "Use sequential thinking to create a maintenance plan for this building based on the IFC model"
 
-  
-
-
 ## Troubleshooting
 
 -   **Connection issues**: Make sure the Blender addon server is running, and the MCP server is configured in Claude
@@ -270,19 +210,12 @@ Here are some examples of what you can ask Claude to do with IFC models:
 -   **"Connection refused" errors**: Make sure Blender is running and the addon is enabled with the server started
 -   **CORS issues**: The API has CORS enabled by default for all origins. If you encounter issues, check your client's CORS settings
 -   **Performance concerns**: For large IFC models, the API responses might be slower. Consider adjusting timeouts in your client
-  
 
 ## Technical Details
 
-  
-
 The IFC integration uses the Bonsai BIM module to access ifcopenshell functionality within Blender. The communication follows the same JSON-based protocol over TCP sockets as the original BlenderMCP.
 
-  
-
 ## Limitations & Security Considerations
-
-  
 
 - The `execute_blender_code` tool from the original project is still available, allowing running arbitrary Python code in Blender. Use with caution and always save your work.
 
@@ -292,23 +225,16 @@ The IFC integration uses the Bonsai BIM module to access ifcopenshell functional
 
 - Get User View tool returns a base64 encoded image. Please ensure the client supports it.
 
-
 ## Contributions
 This MIT licensed repo is open to be forked, modified and used in any way. I'm open to ideas and collaborations, so don't hesitate to get in contact with me for contributions.
 
-  
-
 ## Credits
-
-  
 
 - Original BlenderMCP by [Siddharth Ahuja](https://github.com/ahujasid/blender-mcp)
 
 - Sequential Thinking tool from [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking)
 
 - IFC integration built upon the Bonsai BIM addon for Blender
-
-  
 
 ## TO DO
 
