@@ -703,6 +703,24 @@ def get_user_view() -> Image:
         raise Exception(f"Error processing viewport image: {str(e)}")
 
 
+@mcp.tool()
+def get_ifc_quantities() -> str:
+    """
+    Extract and get basic qtos about the IFC project.
+    
+    Returns:
+        A JSON-formatted string with project quantities information
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("get_ifc_quantities")
+        
+        # Return the formatted JSON of the results
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error getting IFC project quantities: {str(e)}")
+        return f"Error getting IFC project quantities: {str(e)}"
+
 
 # WIP, not ready to be implemented:  
 # @mcp.tool()

@@ -7,7 +7,7 @@ Bonsai-mcp is a fork of [BlenderMCP](https://github.com/ahujasid/blender-mcp) th
 
 ## Features
 
--  **IFC-specific functionality**: Query IFC models, analyze spatial structures, and examine building elements
+-  **IFC-specific functionality**: Query IFC models, analyze spatial structures, examine building elements and extract quantities
 
 -  **Eleven IFC tools included**: Inspect project info, list entities, examine properties, explore spatial structure, analyze relationships and more
 
@@ -224,6 +224,8 @@ This repo includes nine IFC-specific tools that enable comprehensive querying an
 
 **place_ifc_object**: Creates and positions an IFC element in the model at specified coordinates with optional rotation. Example: "Place a door at coordinates X:10, Y:5, Z:0 with 90 degrees rotation"
 
+**get_ifc_quantities**: Calculate and get quantities (m2, m3, etc.) for IFC elements, with options to filter by entity type or selected ones. Example: "Give me the area of all the walls in the building using the tool get_ifc_quantities"
+
 ## Execute Blender Code
 
 Legacy feature from the original MCP implementation. Allows Claude to execute arbitrary Python code in Blender. Use with caution.
@@ -253,6 +255,8 @@ Here are some examples of what you can ask Claude to do with IFC models:
 - "Identify all structural elements in this building"
 
 - "What are the relationships between this wall and other elements?"
+
+- "Generate a report of the measurements from the IFC model opened in Blender"
 
 - "Use sequential thinking to create a maintenance plan for this building based on the IFC model"
 

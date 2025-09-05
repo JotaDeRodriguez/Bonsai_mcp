@@ -213,6 +213,7 @@ class BlenderMCPServer:
             "get_current_view": self.get_current_view,
             "export_ifc_data": self.export_ifc_data,
             "place_ifc_object": self.place_ifc_object,
+            "get_ifc_quantities": self.get_ifc_quantities,
         }
         
 
@@ -932,8 +933,184 @@ class BlenderMCPServer:
             return {"error": str(e), "traceback": traceback.format_exc()}
 
 
+    @staticmethod
+    def get_ifc_quantities(entity_type=None, selected_only=False):
+        """
+        Calculate and get quantities (m2, m3, etc.) for IFC elements.
+        
+        Parameters:
+            entity_type: Type of IFC entity to get quantities for (e.g., "IfcWall", "IfcSlab")
+            selected_only: If True, only get quantities for selected objects
+        
+        Returns:
+            Dictionary with quantities for the specified elements
+        """
+        try:
+            file = IfcStore.get_file()
+            if file is None:
+                return {"error": "No IFC file is currently loaded"}
+            
+            # First, calculate all quantities
+            try:
+                bpy.ops.bim.perform_quantity_take_off()
+            except Exception as e:
+                return {"error": f"Failed to calculate quantities: {str(e)}"}
+            
+            elements_data = []
+            
+            # If we're only looking at selected objects
+            if selected_only:
+                selected_result = BlenderMCPServer.get_selected_ifc_entities()
+                
+                # Check for errors
+                if "error" in selected_result:
+                    return selected_result
+                
+                # If no objects are selected, return early
+                if selected_result["selected_count"] == 0:
+                    return selected_result
+                
+                # Process each selected entity
+                for entity_info in selected_result["selected_entities"]:
+                    # Find entity by GlobalId
+                    entity = file.by_guid(entity_info["id"])
+                    if not entity:
+                        continue
+                    
+                    # Filter by type if specified
+                    if entity_type and entity.is_a() != entity_type:
+                        continue
+                    
+                    # Extract quantities
+                    element_data = extract_quantities(entity, entity_info["blender_name"])
+                    if element_data:
+                        elements_data.append(element_data)
+                        
+            else:
+                # Get entities based on type or default to common element types
+                if entity_type:
+                    entities = file.by_type(entity_type)
+                else:
+                    # Get common element types that have quantities
+                    entity_types = ["IfcWall", "IfcSlab", "IfcBeam", "IfcColumn", "IfcDoor", "IfcWindow"]
+                    entities = []
+                    for etype in entity_types:
+                        entities.extend(file.by_type(etype))
+                
+                # Process each entity
+                for entity in entities:
+                    element_data = extract_quantities(entity)
+                    if element_data:
+                        elements_data.append(element_data)
+            
+            # Summary statistics
+            summary = {
+                "total_elements": len(elements_data),
+                "element_types": {}
+            }
+            
+            # Group by element type for summary
+            for element in elements_data:
+                etype = element["type"]
+                if etype not in summary["element_types"]:
+                    summary["element_types"][etype] = {"count": 0, "total_area": 0, "total_volume": 0}
+                
+                summary["element_types"][etype]["count"] += 1
+                if element["quantities"].get("area"):
+                    summary["element_types"][etype]["total_area"] += element["quantities"]["area"]
+                if element["quantities"].get("volume"):
+                    summary["element_types"][etype]["total_volume"] += element["quantities"]["volume"]
+            
+            return {
+                "success": True,
+                "elements": elements_data,
+                "summary": summary
+            }
+            
+        except Exception as e:
+            import traceback
+            return {"error": str(e), "traceback": traceback.format_exc()}
+
 
     #endregion
+
+
+def extract_quantities(entity, blender_name=None):
+    """
+    Extract quantity information from an IFC entity.
+    
+    Parameters:
+        entity: IFC entity object
+        blender_name: Optional Blender object name
+    
+    Returns:
+        Dictionary with element info and quantities
+    """
+    try:
+        # Get all property sets
+        psets = ifcopenshell.util.element.get_psets(entity)
+        
+        # Basic element info
+        element_data = {
+            "id": entity.GlobalId if hasattr(entity, "GlobalId") else f"Entity_{entity.id()}",
+            "name": entity.Name if hasattr(entity, "Name") else None,
+            "type": entity.is_a(),
+            "blender_name": blender_name,
+            "quantities": {}
+        }
+        
+        # Look for quantity information in different property sets
+        quantity_sources = ["BaseQuantities", "ArchiCADQuantities", "Qto_WallBaseQuantities", 
+                           "Qto_SlabBaseQuantities", "Qto_BeamBaseQuantities", "Qto_ColumnBaseQuantities"]
+        
+        # Common quantity mappings
+        quantity_mappings = {
+            # Area measurements
+            "GrossSideArea": "area",
+            "NetSideArea": "net_area", 
+            "GrossFootprintArea": "footprint_area",
+            "NetFootprintArea": "net_footprint_area",
+            "Oberflächenbereich": "surface_area",
+            
+            # Volume measurements
+            "GrossVolume": "volume",
+            "NetVolume": "net_volume",
+            "Netto-Volumen": "net_volume_de",
+            "Brutto-Volumen der Wand ": "gross_volume_de",
+            
+            # Length measurements
+            "Length": "length",
+            "Height": "height",
+            "Width": "width",
+            "Höhe": "height_de",
+            "Dicke": "thickness",
+            
+            # Other measurements
+            "Fläche": "area_de",
+            "Wandlänge an der Außenseite": "outer_length",
+            "Wandlänge an der Innenseite": "inner_length"
+        }
+        
+        # Extract quantities from property sets
+        for pset_name in quantity_sources:
+            if pset_name in psets:
+                pset_data = psets[pset_name]
+                for prop_name, prop_value in pset_data.items():
+                    if prop_name in quantity_mappings and isinstance(prop_value, (int, float)):
+                        mapped_name = quantity_mappings[prop_name]
+                        element_data["quantities"][mapped_name] = prop_value
+        
+        # Add common derived quantities if available
+        if "area" in element_data["quantities"]:
+            element_data["quantities"]["area_m2"] = element_data["quantities"]["area"]
+        if "volume" in element_data["quantities"]:
+            element_data["quantities"]["volume_m3"] = element_data["quantities"]["volume"]
+            
+        return element_data if element_data["quantities"] else None
+        
+    except Exception as e:
+        return None
+
 
 # Blender UI Panel
 class BLENDERMCP_PT_Panel(bpy.types.Panel):
