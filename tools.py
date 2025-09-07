@@ -107,7 +107,7 @@ class BlenderConnection:
         else:
             raise Exception("No data received")
 
-    def send_command(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+    def send_command(self, command_type: str, params: Dict[str, Any] | None = None) -> Dict[str, Any]:
         """Send a command to Blender and return the response"""
         if not self.sock and not self.connect():
             raise ConnectionError("Not connected to Blender")
@@ -350,6 +350,10 @@ class SequentialThinkingServer:
 # Create a single instance of the sequential thinking server
 thinking_server = SequentialThinkingServer()
 
+# -------------------------------
+# MCP TOOLS
+# -------------------------------
+
 
 @mcp.tool()
 def execute_blender_code(ctx: Context, code: str) -> str:
@@ -411,7 +415,7 @@ def get_selected_ifc_entities() -> str:
 
 # Modify the existing list_ifc_entities function to accept a selected_only parameter
 @mcp.tool()
-def list_ifc_entities(entity_type: str = None, limit: int = 50, selected_only: bool = False) -> str:
+def list_ifc_entities(entity_type: str | None = None, limit: int = 50, selected_only: bool = False) -> str:
     """
     List IFC entities of a specific type. Can be filtered to only include objects
     currently selected in the Blender UI.
@@ -440,7 +444,7 @@ def list_ifc_entities(entity_type: str = None, limit: int = 50, selected_only: b
 
 # Modify the existing get_ifc_properties function to accept a selected_only parameter
 @mcp.tool()
-def get_ifc_properties(global_id: str = None, selected_only: bool = False) -> str:
+def get_ifc_properties(global_id: str | None = None, selected_only: bool = False) -> str:
     """
     Get properties of IFC entities. Can be used to get properties of a specific entity by GlobalId,
     or to get properties of all currently selected objects in Blender.
@@ -515,10 +519,10 @@ def get_ifc_relationships(global_id: str) -> str:
 
 @mcp.tool()
 def export_ifc_data(
-    entity_type: str = None, 
-    level_name: str = None, 
+    entity_type: str | None = None, 
+    level_name: str | None = None, 
     output_format: str = "csv",
-    ctx: Context = None
+    ctx: Context | None = None
 ) -> str:
     """
     Export IFC data to a file in JSON or CSV format.
@@ -554,7 +558,9 @@ def export_ifc_data(
             return f"Error: {result['error']}"
         
         # Return the result with export summary
-        return result
+        # return result
+        return json.dumps(result, indent=2)
+    
     except Exception as e:
         logger.error(f"Error exporting IFC data: {str(e)}")
         return f"Error exporting IFC data: {str(e)}"
@@ -567,7 +573,7 @@ def place_ifc_object(
     y: float, 
     z: float, 
     rotation: float = 0.0,
-    ctx: Context = None
+    ctx: Context| None = None
 ) -> str:
     """
     Place an IFC object at a specified location with optional rotation.
@@ -679,7 +685,7 @@ def get_user_view() -> Image:
                     new_width = int(original_width * (max_dimension / original_height))
                 
                 # Resize using high-quality resampling
-                img = img.resize((new_width, new_height), PILImage.LANCZOS)
+                img = img.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
             
             # Convert to RGB if needed
             if img.mode == 'RGBA':
@@ -768,6 +774,84 @@ def get_ifc_quantities() -> str:
 #         logger.error(f"Error creating plan view: {str(e)}")
 #         raise Exception(f"Error creating plan view: {str(e)}")
 
+
+@mcp.tool()
+def export_floor_plan_png(
+    height_offset: float = 0.5,
+    view_type: str = "top",
+    resolution_x: int = 1920,
+    resolution_y: int = 1080,
+    storey_name: str | None = None,
+    output_path: str | None = None
+) -> dict:
+    """Export floor plans as PNG images with custom resolution.
+    
+    Creates a plan view (top-down orthographic view) of IFC building storeys at the specified 
+    height above the floor level. Supports custom resolution for high-quality architectural drawings.
+    
+    Args:
+        height_offset: Height in meters above the storey level for the camera position (default 0.5m)
+        view_type: Type of view - "top" for plan view, "front", "right", "left" for elevations
+        resolution_x: Horizontal resolution in pixels (default 1920, max recommended 4096)
+        resolution_y: Vertical resolution in pixels (default 1080, max recommended 4096)
+        storey_name: Specific storey name to render (if None, renders all storeys or ground floor)
+        output_path: Optional file path to save the PNG (if None, returns as base64 image)
+    
+    Returns:
+        metadata and the path of the file image of the floor plan at the specified resolution
+    """
+    try:
+        # Validate resolution limits for performance
+        if resolution_x > 4096 or resolution_y > 4096:
+            raise Exception("Resolution too high. Maximum recommended: 4096x4096 pixels")
+        
+        if resolution_x < 100 or resolution_y < 100:
+            raise Exception("Resolution too low. Minimum: 100x100 pixels")
+        
+        # Get the global connection
+        blender = get_blender_connection()
+        
+        # Request floor plan render
+        result = blender.send_command("export_floor_plan_png", {
+            "view_type": view_type,
+            "height_offset": height_offset,
+            "resolution_x": resolution_x,
+            "resolution_y": resolution_y,
+            "storey_name": storey_name,
+            "output_path": output_path
+        })
+        
+        if "error" in result:
+            raise Exception(f"Error creating floor plan: {result.get('error', 'Unknown error')}")
+        
+        if "data" not in result:
+            raise Exception("No image data returned from Blender")
+        
+        # Decode the base64 image data
+        image_data = base64.b64decode(result["data"])
+        
+        # Ensure output path exists
+        if not output_path:
+            os.makedirs("./exports/floor_plans", exist_ok=True)
+            filename = f"floor_plan_{storey_name or 'default'}.png"
+            output_path = os.path.join("./exports/floor_plans", filename)
+        
+        # Save to file
+        with open(output_path, "wb") as f:
+            f.write(image_data)
+        
+        # Return only metadata
+        return {
+            "status": "success",
+            "file_path": os.path.abspath(output_path),
+            # Opcional: si tienes un servidor de archivos, podrías devolver también una URL
+            # "url": f"http://localhost:8000/files/{filename}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error exporting floor plan: {str(e)}")
+        return { "status": "error", "message": str(e) }
+
 @mcp.tool()
 def sequentialthinking(
     thought: str,
@@ -826,6 +910,200 @@ def sequentialthinking(
     
     response = thinking_server.process_thought(input_data)
     return json.dumps(response, indent=2)
+
+
+# -------------------------------
+# MCP RESOURCES
+# -------------------------------
+
+# Base path of the resource files
+BASE_PATH = Path("./resources")
+
+@mcp.resource("file://table_of_contents.md")
+def formulas_rp() -> str:
+    """Leer el contenido del archivo table_of_contents.md"""
+    file_path = BASE_PATH / "table_of_contents.md"
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        return f"Error: No se encontró el archivo {file_path}"
+    except Exception as e:
+        return f"Error al leer el archivo: {str(e)}"
+
+
+# -------------------------------
+# MCP PROMPTS
+# -------------------------------
+
+@mcp.prompt("Technical_building_report")
+def technical_building_report(project_name: str, project_location: str, language: str = "english") -> str:
+    """
+    Generate a comprehensive technical building report based on an IFC model loaded in Blender.
+    
+    Args:
+        project_name: Name of the project/building
+        project_location: Building location (city, address)
+        language: Report language - "english", "spanish", "french", "german", "italian", "portuguese"
+    
+    Returns:
+        Structured technical report following basic project standards in the selected language.
+    """
+    
+    # Language-specific instructions
+    language_instructions = {
+        "english": {
+            "role": "You are a technical architect specialized in creating technical reports for basic building projects.",
+            "objective": f"Your objective is to generate a comprehensive technical report for the building \"{project_name}\" located in \"{project_location}\", using data from the IFC model loaded in Blender.",
+            "workflow_title": "## MANDATORY WORKFLOW:",
+            "report_language": "Write the entire report in English."
+        },
+        "spanish": {
+            "role": "Eres un arquitecto técnico especializado en la creación de memorias técnicas de proyectos básicos de edificación.",
+            "objective": f"Tu objetivo es generar una memoria técnica completa del edificio \"{project_name}\" localizado en \"{project_location}\", utilizando los datos del modelo IFC cargado en Blender.",
+            "workflow_title": "## FLUJO DE TRABAJO OBLIGATORIO:",
+            "report_language": "Redacta todo el informe en español."
+        },
+        "french": {
+            "role": "Vous êtes un architecte technique spécialisé dans la création de rapports techniques pour les projets de bâtiment de base.",
+            "objective": f"Votre objectif est de générer un rapport technique complet pour le bâtiment \"{project_name}\" situé à \"{project_location}\", en utilisant les données du modèle IFC chargé dans Blender.",
+            "workflow_title": "## FLUX DE TRAVAIL OBLIGATOIRE:",
+            "report_language": "Rédigez tout le rapport en français."
+        },
+        "german": {
+            "role": "Sie sind ein technischer Architekt, der sich auf die Erstellung technischer Berichte für grundlegende Bauprojekte spezialisiert hat.",
+            "objective": f"Ihr Ziel ist es, einen umfassenden technischen Bericht für das Gebäude \"{project_name}\" in \"{project_location}\" zu erstellen, unter Verwendung der Daten aus dem in Blender geladenen IFC-Modell.",
+            "workflow_title": "## OBLIGATORISCHER ARBEITSABLAUF:",
+            "report_language": "Verfassen Sie den gesamten Bericht auf Deutsch."
+        },
+        "italian": {
+            "role": "Sei un architetto tecnico specializzato nella creazione di relazioni tecniche per progetti edilizi di base.",
+            "objective": f"Il tuo obiettivo è generare una relazione tecnica completa per l'edificio \"{project_name}\" situato a \"{project_location}\", utilizzando i dati del modello IFC caricato in Blender.",
+            "workflow_title": "## FLUSSO DI LAVORO OBBLIGATORIO:",
+            "report_language": "Scrivi tutto il rapporto in italiano."
+        },
+        "portuguese": {
+            "role": "Você é um arquiteto técnico especializado na criação de relatórios técnicos para projetos básicos de construção.",
+            "objective": f"Seu objetivo é gerar um relatório técnico abrangente para o edifício \"{project_name}\" localizado em \"{project_location}\", usando dados do modelo IFC carregado no Blender.",
+            "workflow_title": "## FLUXO DE TRABALHO OBRIGATÓRIO:",
+            "report_language": "Escreva todo o relatório em português."
+        }
+    }
+    
+    # Get language instructions (default to English if language not supported)
+    lang_config = language_instructions.get(language.lower(), language_instructions["english"])
+    
+    return f"""
+{lang_config["role"]} {lang_config["objective"]}
+
+**LANGUAGE REQUIREMENT:** {lang_config["report_language"]}
+
+{lang_config["workflow_title"]}
+
+### 1. INITIAL IFC MODEL ANALYSIS
+- **Use MCP tool:** `get_ifc_project_info` to get basic project information
+- **Use MCP tool:** `get_ifc_spatial_structure` to understand the building's spatial structure
+- **Use MCP tool:** `get_user_view` to capture a general view of the model
+
+### 2. OBTAIN TABLE OF CONTENTS
+- **Access MCP resource:** `file://table_of_contents.md` to get the complete technical report structure
+
+### 3. DETAILED ANALYSIS BY SECTIONS
+
+#### 3.1 For "General Building Data" Section:
+- **Use:** `get_ifc_quantities` to obtain areas and volumes
+- **Use:** `list_ifc_entities` with entity_type="IfcSpace" for spaces
+- **Use:** `list_ifc_entities` with entity_type="IfcBuildingStorey" for floors
+
+#### 3.2 For "Architectural Solution" Section:
+- **Use:** `list_ifc_entities` with entity_type="IfcWall" for walls
+- **Use:** `list_ifc_entities` with entity_type="IfcDoor" for doors
+- **Use:** `list_ifc_entities` with entity_type="IfcWindow" for windows
+- **Use:** `get_user_view` to capture representative views
+
+#### 3.3 For "Construction Systems" Section:
+- **Use:** `list_ifc_entities` with entity_type="IfcBeam" for beams
+- **Use:** `list_ifc_entities` with entity_type="IfcColumn" for columns
+- **Use:** `list_ifc_entities` with entity_type="IfcSlab" for slabs
+- **Use:** `list_ifc_entities` with entity_type="IfcRoof" for roofs
+- **Use:** `get_ifc_properties` to obtain material properties
+
+#### 3.4 For Building Services:
+- **Use:** `list_ifc_entities` with entity_type="IfcPipeSegment" for plumbing
+- **Use:** `list_ifc_entities` with entity_type="IfcCableSegment" for electrical
+- **Use:** `list_ifc_entities` with entity_type="IfcDuctSegment" for HVAC
+
+#### 3.5 For Plans and Graphic Documentation:
+- **Use:** `export_floor_plan_png` to generate architectural floor plans for each level. Generate top, front and left views.
+- **Configure:** resolution_x=1920, resolution_y=1080 for adequate quality
+- **Use:** `get_user_view` for complementary 3D views
+
+### 4. TECHNICAL REPORT STRUCTURE
+
+Organize the document following exactly the structure from the `table_of_contents.md` resource:
+
+**TECHNICAL REPORT – BASIC PROJECT: {project_name}**
+
+**Location:** {project_location}
+
+#### 1. INTRODUCTION
+- Define object and scope based on IFC model data
+- Justify the adopted architectural solution
+
+#### 2. GENERAL BUILDING DATA
+- **Location:** {project_location}
+- **Areas:** Extract from quantities and spaces analysis
+- **Distribution:** Based on IFC spatial structure
+- **Regulations:** Identify applicable regulations according to use and location
+
+#### 3-11. DEVELOPMENT OF ALL SECTIONS
+- Complete each section according to the index, using data extracted from the IFC model
+- Include summary tables of areas, materials and construction elements
+- Generate technical conclusions based on evidence
+
+### 5. MANDATORY GRAPHIC DOCUMENTATION
+- **Generate floor plans:** One per level using `export_floor_plan_png`
+- **3D views:** General and detail perspectives with `get_user_view`
+- **Organize:** All images in section 11. Annexes
+
+### 6. TECHNICAL TABLES AND CHARTS
+- **Areas summary table:** Extracted from quantities
+- **Elements listing:** By typologies (walls, columns, beams, etc.)
+- **Material properties:** From IFC properties
+
+## RESPONSE FORMAT:
+
+### MARKDOWN STRUCTURE:
+```markdown
+# TECHNICAL REPORT – BASIC PROJECT
+## {project_name}
+
+### Project Data:
+- **Location:** {project_location}
+- **Date:** [current date]
+- **IFC Model:** [model information]
+
+[Complete development of all index sections]
+```
+
+### QUALITY CRITERIA:
+- **Technical precision:** All numerical data extracted directly from IFC model
+- **Completeness:** Cover all index sections mandatory
+- **Professional format:** Markdown tables, structured text, integrated images
+- **Consistency:** Verify data consistency between sections
+
+## CRITICAL VALIDATIONS:
+1. **Verify Blender connection:** Confirm IFC model is loaded
+2. **Complete all sections:** Do not omit any index section
+3. **Include graphic documentation:** Floor plans and 3D views mandatory
+4. **Quantitative data:** Areas, volumes and quantities verified
+5. **Regulatory consistency:** Applicable regulations according to use and location
+
+**IMPORTANT:** If any MCP tool fails or doesn't return data, document the limitation and indicate that section requires manual completion in executive project phase.
+
+Proceed to generate the technical report following this detailed workflow.
+"""
+
 
 # Main execution
 

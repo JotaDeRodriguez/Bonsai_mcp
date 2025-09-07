@@ -214,6 +214,7 @@ class BlenderMCPServer:
             "export_ifc_data": self.export_ifc_data,
             "place_ifc_object": self.place_ifc_object,
             "get_ifc_quantities": self.get_ifc_quantities,
+            "export_floor_plan_png": self.export_floor_plan_png,
         }
         
 
@@ -1030,6 +1031,213 @@ class BlenderMCPServer:
         except Exception as e:
             import traceback
             return {"error": str(e), "traceback": traceback.format_exc()}
+    
+    @staticmethod
+    def export_floor_plan_png(view_type="top", height_offset=0.5, resolution_x=1920, 
+                             resolution_y=1080, storey_name=None, output_path=None):
+        """
+        Export floor plans as PNG images with custom resolution.
+        
+        Creates orthographic views of IFC building storeys, particularly useful for 
+        architectural floor plans and elevations.
+        
+        Args:
+            view_type: "top" for plan view, "front", "right", "left" for elevations
+            height_offset: Height in meters above storey level for camera position  
+            resolution_x: Horizontal resolution in pixels
+            resolution_y: Vertical resolution in pixels
+            storey_name: Specific storey name to render (None for all/ground floor)
+            output_path: File path to save PNG (None for temp file)
+        
+        Returns:
+            Dict with base64 encoded image data and metadata
+        """
+        try:
+            import tempfile
+            import os
+            
+            # Validate parameters
+            if resolution_x > 4096 or resolution_y > 4096:
+                return {"error": "Resolution too high. Maximum: 4096x4096"}
+            
+            if resolution_x < 100 or resolution_y < 100:
+                return {"error": "Resolution too low. Minimum: 100x100"}
+            
+            # Check if IFC file is loaded
+            file = IfcStore.get_file()
+            if file is None:
+                return {"error": "No IFC file is currently loaded"}
+            
+            # Store original render settings
+            scene = bpy.context.scene
+            original_engine = scene.render.engine
+            original_res_x = scene.render.resolution_x
+            original_res_y = scene.render.resolution_y
+            original_filepath = scene.render.filepath
+            
+            # Set up render settings for floor plan
+            scene.render.engine = 'BLENDER_WORKBENCH'  # Fast, good for architectural drawings
+            scene.render.resolution_x = resolution_x
+            scene.render.resolution_y = resolution_y
+            scene.render.resolution_percentage = 100
+            
+            # Store original camera if exists
+            original_camera = bpy.context.scene.camera
+            
+            # Create temporary camera for orthographic rendering
+            bpy.ops.object.camera_add()
+            camera = bpy.context.object
+            camera.name = "TempFloorPlanCamera"
+            bpy.context.scene.camera = camera
+            
+            # Set camera to orthographic
+            camera.data.type = 'ORTHO'
+            camera.data.ortho_scale = 50  # Adjust based on building size
+            
+            # Position camera based on view type and storey
+            if view_type == "top":
+                # Find building bounds to position camera appropriately
+                all_objects = [obj for obj in bpy.context.scene.objects 
+                              if obj.type == 'MESH' and obj.visible_get()]
+                
+                if all_objects:
+                    # Calculate bounding box of all visible objects
+                    min_x = min_y = min_z = float('inf')
+                    max_x = max_y = max_z = float('-inf')
+                    
+                    for obj in all_objects:
+                        bbox = [obj.matrix_world @ mathutils.Vector(corner) for corner in obj.bound_box]
+                        for corner in bbox:
+                            min_x = min(min_x, corner.x)
+                            max_x = max(max_x, corner.x)
+                            min_y = min(min_y, corner.y)  
+                            max_y = max(max_y, corner.y)
+                            min_z = min(min_z, corner.z)
+                            max_z = max(max_z, corner.z)
+                    
+                    # Position camera above the building
+                    center_x = (min_x + max_x) / 2
+                    center_y = (min_y + max_y) / 2
+                    
+                    # For plan view, position camera above
+                    camera_height = max_z + height_offset
+                    camera.location = (center_x, center_y, camera_height)
+                    camera.rotation_euler = (0, 0, 0)  # Look down
+                    
+                    # Adjust orthographic scale based on building size
+                    building_width = max(max_x - min_x, max_y - min_y) * 1.2  # Add 20% margin
+                    camera.data.ortho_scale = building_width
+                else:
+                    # Default position if no objects found
+                    camera.location = (0, 0, 10)
+                    camera.rotation_euler = (0, 0, 0)
+            
+            elif view_type in ["front", "right", "left"]:
+                # For elevations, position camera accordingly
+                # This is a simplified implementation - could be enhanced
+                all_objects = [obj for obj in bpy.context.scene.objects 
+                              if obj.type == 'MESH' and obj.visible_get()]
+                
+                if all_objects:
+                    # Calculate bounds
+                    min_x = min_y = min_z = float('inf')
+                    max_x = max_y = max_z = float('-inf')
+                    
+                    for obj in all_objects:
+                        bbox = [obj.matrix_world @ mathutils.Vector(corner) for corner in obj.bound_box]
+                        for corner in bbox:
+                            min_x = min(min_x, corner.x)
+                            max_x = max(max_x, corner.x)
+                            min_y = min(min_y, corner.y)
+                            max_y = max(max_y, corner.y)
+                            min_z = min(min_z, corner.z)
+                            max_z = max(max_z, corner.z)
+                    
+                    center_x = (min_x + max_x) / 2
+                    center_y = (min_y + max_y) / 2
+                    center_z = (min_z + max_z) / 2
+                    
+                    building_depth = max(max_x - min_x, max_y - min_y) * 2
+                    
+                    if view_type == "front":
+                        camera.location = (center_x, center_y - building_depth, center_z)
+                        camera.rotation_euler = (1.5708, 0, 0)  # 90 degrees X rotation
+                    elif view_type == "right":
+                        camera.location = (center_x + building_depth, center_y, center_z)
+                        camera.rotation_euler = (1.5708, 0, 1.5708)  # Look from right
+                    elif view_type == "left":
+                        camera.location = (center_x - building_depth, center_y, center_z)
+                        camera.rotation_euler = (1.5708, 0, -1.5708)  # Look from left
+                    
+                    # Adjust scale for elevations
+                    building_height = max_z - min_z
+                    building_width = max(max_x - min_x, max_y - min_y)
+                    camera.data.ortho_scale = max(building_height, building_width) * 1.2
+            
+            # Set up output file path
+            if output_path:
+                render_path = output_path
+            else:
+                temp_dir = tempfile.gettempdir()
+                render_path = os.path.join(temp_dir, f"floor_plan_{view_type}_{int(time.time())}.png")
+            
+            scene.render.filepath = render_path
+            scene.render.image_settings.file_format = 'PNG'
+            
+            # Render the image
+            bpy.ops.render.render(write_still=True)
+            
+            # Read the rendered image and encode as base64
+            if os.path.exists(render_path):
+                with open(render_path, 'rb') as f:
+                    image_data = f.read()
+                
+                # Clean up temporary file if we created it
+                if not output_path:
+                    os.remove(render_path)
+                
+                # Restore original settings
+                scene.render.engine = original_engine
+                scene.render.resolution_x = original_res_x
+                scene.render.resolution_y = original_res_y
+                scene.render.filepath = original_filepath
+                bpy.context.scene.camera = original_camera
+                
+                # Delete temporary camera
+                bpy.data.objects.remove(camera, do_unlink=True)
+                
+                # Return base64 encoded image
+                import base64
+                return {
+                    "success": True,
+                    "data": base64.b64encode(image_data).decode('utf-8'),
+                    "format": "png",
+                    "resolution": f"{resolution_x}x{resolution_y}",
+                    "view_type": view_type,
+                    "output_path": render_path if output_path else None
+                }
+            else:
+                return {"error": "Failed to create render file"}
+                
+        except Exception as e:
+            # Restore settings on error
+            try:
+                scene = bpy.context.scene
+                scene.render.engine = original_engine
+                scene.render.resolution_x = original_res_x
+                scene.render.resolution_y = original_res_y 
+                scene.render.filepath = original_filepath
+                bpy.context.scene.camera = original_camera
+                
+                # Clean up camera if it exists
+                if 'camera' in locals() and camera:
+                    bpy.data.objects.remove(camera, do_unlink=True)
+            except:
+                pass
+                
+            import traceback
+            return {"error": f"Error creating floor plan: {str(e)}", 
+                    "traceback": traceback.format_exc()}
 
 
     #endregion
