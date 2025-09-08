@@ -1,1 +1,4 @@
 *.md
+.claude
+__pycache__
+exports
