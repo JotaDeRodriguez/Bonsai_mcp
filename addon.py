@@ -214,7 +214,7 @@ class BlenderMCPServer:
             "export_ifc_data": self.export_ifc_data,
             "place_ifc_object": self.place_ifc_object,
             "get_ifc_quantities": self.get_ifc_quantities,
-            "export_plan_png": self.export_plan_png,
+            "export_drawing_png": self.export_drawing_png,
         }
         
 
@@ -1033,12 +1033,12 @@ class BlenderMCPServer:
             return {"error": str(e), "traceback": traceback.format_exc()}
     
     @staticmethod
-    def export_plan_png(view_type="top", height_offset=0.5, resolution_x=1920, 
+    def export_drawing_png(view_type="top", height_offset=0.5, resolution_x=1920, 
                              resolution_y=1080, storey_name=None, output_path=None):
         """
-        Export plans as PNG images with custom resolution.
+        Export drawings as PNG images with custom resolution.
         
-        Creates 2D and 3D views of IFC building, particularly useful for architectural plans.
+        Creates 2D and 3D views of IFC building, particularly useful for architectural drawings.
         
         Args:
             view_type: "top" for plan view, "front", "right", "left" for elevations, "isometric" for 3D view
@@ -1074,7 +1074,7 @@ class BlenderMCPServer:
             original_res_y = scene.render.resolution_y
             original_filepath = scene.render.filepath
             
-            # Set up render settings for plan
+            # Set up render settings for drawing
             scene.render.engine = 'BLENDER_WORKBENCH'  # Fast, good for architectural drawings
             scene.render.resolution_x = resolution_x
             scene.render.resolution_y = resolution_y
@@ -1086,7 +1086,7 @@ class BlenderMCPServer:
             # Create temporary camera for orthographic rendering
             bpy.ops.object.camera_add()
             camera = bpy.context.object
-            camera.name = "TempPlanCamera"
+            camera.name = "TempDrawingCamera"
             bpy.context.scene.camera = camera
             
             # Set camera to orthographic
@@ -1228,7 +1228,7 @@ class BlenderMCPServer:
                 render_path = output_path
             else:
                 temp_dir = tempfile.gettempdir()
-                render_path = os.path.join(temp_dir, f"plan_{view_type}_{int(time.time())}.png")
+                render_path = os.path.join(temp_dir, f"drawing_{view_type}_{int(time.time())}.png")
             
             scene.render.filepath = render_path
             scene.render.image_settings.file_format = 'PNG'
@@ -1285,7 +1285,7 @@ class BlenderMCPServer:
                 pass
                 
             import traceback
-            return {"error": f"Error creating plan: {str(e)}", 
+            return {"error": f"Error creating drawing: {str(e)}", 
                     "traceback": traceback.format_exc()}
 
 
