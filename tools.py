@@ -669,8 +669,6 @@ def get_user_view() -> Image:
         if original_width > 800 or original_height > 800 or len(image_data) > 1000000:
             # logger.info(f"Compressing image (original size: {len(image_data)} bytes)")
             
-
-            
             # Open image from binary data
             img = PILImage.open(io.BytesIO(image_data))
             
@@ -695,7 +693,7 @@ def get_user_view() -> Image:
             output = io.BytesIO()
             img.save(output, format='JPEG', quality=compression_quality, optimize=True)
             compressed_data = output.getvalue()
-            
+
             # logger.info(f"Image compressed from {len(image_data)} to {len(compressed_data)} bytes")
             
             # Return compressed image
@@ -776,7 +774,7 @@ def get_ifc_quantities() -> str:
 
 
 @mcp.tool()
-def export_floor_plan_png(
+def export_plan_png(
     height_offset: float = 0.5,
     view_type: str = "top",
     resolution_x: int = 1920,
@@ -784,21 +782,21 @@ def export_floor_plan_png(
     storey_name: str | None = None,
     output_path: str | None = None
 ) -> dict:
-    """Export floor plans as PNG images with custom resolution.
+    """Export plans as PNG images with custom resolution.
     
-    Creates a plan view (top-down orthographic view) of IFC building storeys at the specified 
+    Creates a plan, with the view type specified, of the IFC building at the specified 
     height above the floor level. Supports custom resolution for high-quality architectural drawings.
     
     Args:
         height_offset: Height in meters above the storey level for the camera position (default 0.5m)
-        view_type: Type of view - "top" for plan view, "front", "right", "left" for elevations
+        view_type: Type of view - "top" for plan view, "front", "right" and "left" for elevation views, and "isometric" for 3D view
         resolution_x: Horizontal resolution in pixels (default 1920, max recommended 4096)
         resolution_y: Vertical resolution in pixels (default 1080, max recommended 4096)
-        storey_name: Specific storey name to render (if None, renders all storeys or ground floor)
+        storey_name: Specific storey name to add to the file name (if None, prints default in the file name)
         output_path: Optional file path to save the PNG (if None, returns as base64 image)
     
     Returns:
-        metadata and the path of the file image of the floor plan at the specified resolution
+        metadata and the path of the file image of the plan at the specified resolution
     """
     try:
         # Validate resolution limits for performance
@@ -811,8 +809,8 @@ def export_floor_plan_png(
         # Get the global connection
         blender = get_blender_connection()
         
-        # Request floor plan render
-        result = blender.send_command("export_floor_plan_png", {
+        # Request plan render
+        result = blender.send_command("export_plan_png", {
             "view_type": view_type,
             "height_offset": height_offset,
             "resolution_x": resolution_x,
@@ -822,7 +820,7 @@ def export_floor_plan_png(
         })
         
         if "error" in result:
-            raise Exception(f"Error creating floor plan: {result.get('error', 'Unknown error')}")
+            raise Exception(f"Error creating {view_type} plan: {result.get('error', 'Unknown error')}")
         
         if "data" not in result:
             raise Exception("No image data returned from Blender")
@@ -832,9 +830,17 @@ def export_floor_plan_png(
         
         # Ensure output path exists
         if not output_path:
-            os.makedirs("./exports/floor_plans", exist_ok=True)
-            filename = f"floor_plan_{storey_name or 'default'}.png"
-            output_path = os.path.join("./exports/floor_plans", filename)
+            os.makedirs("./exports/plans", exist_ok=True)
+            # Generate filename based on view type
+            view_name = {
+                "top": "plan_view",
+                "front": "front_elevation", 
+                "right": "right_elevation",
+                "left": "left_elevation",
+                "isometric": "isometric_view"
+            }.get(view_type, view_type)
+            filename = f"{view_name}_{storey_name or 'default'}.png"
+            output_path = os.path.join("./exports/plans", filename)
         
         # Save to file
         with open(output_path, "wb") as f:
@@ -849,7 +855,7 @@ def export_floor_plan_png(
         }
         
     except Exception as e:
-        logger.error(f"Error exporting floor plan: {str(e)}")
+        logger.error(f"Error exporting plan: {str(e)}")
         return { "status": "error", "message": str(e) }
 
 @mcp.tool()
@@ -1034,7 +1040,7 @@ def technical_building_report(project_name: str, project_location: str, language
 - **Use:** `list_ifc_entities` with entity_type="IfcDuctSegment" for HVAC
 
 #### 3.5 For Plans and Graphic Documentation:
-- **Use:** `export_floor_plan_png` to generate architectural floor plans for each level. Generate top, front and left views.
+- **Use:** `export_plan_png` 5 times, using as parameter each time "top", "front", "right", "left" and "isometric", to generate architectural plans.
 - **Configure:** resolution_x=1920, resolution_y=1080 for adequate quality
 - **Use:** `get_user_view` for complementary 3D views
 
@@ -1062,8 +1068,8 @@ Organize the document following exactly the structure from the `table_of_content
 - Generate technical conclusions based on evidence
 
 ### 5. MANDATORY GRAPHIC DOCUMENTATION
-- **Generate floor plans:** One per level using `export_floor_plan_png`
-- **3D views:** General and detail perspectives with `get_user_view`
+- **2D plans:**Include the 4 2D plans generated before in the 3.5 section with the Tool `export_plan_png` ("top", "front", "right", "left")
+- **3D views:** Include the isometric 3D view generated before in the 3.5 section with the Tool `export_plan_png`
 - **Organize:** All images in section 11. Annexes
 
 ### 6. TECHNICAL TABLES AND CHARTS
@@ -1095,7 +1101,7 @@ Organize the document following exactly the structure from the `table_of_content
 ## CRITICAL VALIDATIONS:
 1. **Verify Blender connection:** Confirm IFC model is loaded
 2. **Complete all sections:** Do not omit any index section
-3. **Include graphic documentation:** Floor plans and 3D views mandatory
+3. **Include graphic documentation:** Plans and 3D views mandatory
 4. **Quantitative data:** Areas, volumes and quantities verified
 5. **Regulatory consistency:** Applicable regulations according to use and location
 
