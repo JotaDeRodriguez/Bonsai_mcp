@@ -214,7 +214,7 @@ class BlenderMCPServer:
             "export_ifc_data": self.export_ifc_data,
             "place_ifc_object": self.place_ifc_object,
             "get_ifc_quantities": self.get_ifc_quantities,
-            "export_floor_plan_png": self.export_floor_plan_png,
+            "export_drawing_png": self.export_drawing_png,
         }
         
 
@@ -1033,16 +1033,15 @@ class BlenderMCPServer:
             return {"error": str(e), "traceback": traceback.format_exc()}
     
     @staticmethod
-    def export_floor_plan_png(view_type="top", height_offset=0.5, resolution_x=1920, 
+    def export_drawing_png(view_type="top", height_offset=0.5, resolution_x=1920, 
                              resolution_y=1080, storey_name=None, output_path=None):
         """
-        Export floor plans as PNG images with custom resolution.
+        Export drawings as PNG images with custom resolution.
         
-        Creates orthographic views of IFC building storeys, particularly useful for 
-        architectural floor plans and elevations.
+        Creates 2D and 3D views of IFC building, particularly useful for architectural drawings.
         
         Args:
-            view_type: "top" for plan view, "front", "right", "left" for elevations
+            view_type: "top" for plan view, "front", "right", "left" for elevations, "isometric" for 3D view
             height_offset: Height in meters above storey level for camera position  
             resolution_x: Horizontal resolution in pixels
             resolution_y: Vertical resolution in pixels
@@ -1075,7 +1074,7 @@ class BlenderMCPServer:
             original_res_y = scene.render.resolution_y
             original_filepath = scene.render.filepath
             
-            # Set up render settings for floor plan
+            # Set up render settings for drawing
             scene.render.engine = 'BLENDER_WORKBENCH'  # Fast, good for architectural drawings
             scene.render.resolution_x = resolution_x
             scene.render.resolution_y = resolution_y
@@ -1087,7 +1086,7 @@ class BlenderMCPServer:
             # Create temporary camera for orthographic rendering
             bpy.ops.object.camera_add()
             camera = bpy.context.object
-            camera.name = "TempFloorPlanCamera"
+            camera.name = "TempDrawingCamera"
             bpy.context.scene.camera = camera
             
             # Set camera to orthographic
@@ -1174,12 +1173,62 @@ class BlenderMCPServer:
                     building_width = max(max_x - min_x, max_y - min_y)
                     camera.data.ortho_scale = max(building_height, building_width) * 1.2
             
+            elif view_type == "isometric":
+                # For isometric view, use perspective camera positioned diagonally
+                camera.data.type = 'PERSP'
+                camera.data.lens = 35  # 35mm lens for nice perspective
+                
+                all_objects = [obj for obj in bpy.context.scene.objects 
+                              if obj.type == 'MESH' and obj.visible_get()]
+                
+                if all_objects:
+                    # Calculate bounds
+                    min_x = min_y = min_z = float('inf')
+                    max_x = max_y = max_z = float('-inf')
+                    
+                    for obj in all_objects:
+                        bbox = [obj.matrix_world @ mathutils.Vector(corner) for corner in obj.bound_box]
+                        for corner in bbox:
+                            min_x = min(min_x, corner.x)
+                            max_x = max(max_x, corner.x)
+                            min_y = min(min_y, corner.y)
+                            max_y = max(max_y, corner.y)
+                            min_z = min(min_z, corner.z)
+                            max_z = max(max_z, corner.z)
+                    
+                    center_x = (min_x + max_x) / 2
+                    center_y = (min_y + max_y) / 2
+                    center_z = (min_z + max_z) / 2
+                    
+                    # Calculate distance to frame the building nicely
+                    building_size = max(max_x - min_x, max_y - min_y, max_z - min_z)
+                    distance = building_size * 1.2  # Distance multiplier for good framing
+                    
+                    # Position camera for isometric view (45° angles)
+                    # Classic isometric position: up and back, looking down at 30°
+                    import math
+                    angle_rad = math.radians(45)
+                    
+                    camera_x = center_x + distance * math.cos(angle_rad)
+                    camera_y = center_y - distance * math.sin(angle_rad)
+                    camera_z = center_z + distance * 0.3  # Lower elevation for better facade view
+                    
+                    camera.location = (camera_x, camera_y, camera_z)
+                    
+                    # Point camera at building center
+                    direction = mathutils.Vector((center_x - camera_x, center_y - camera_y, center_z - camera_z))
+                    camera.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
+                else:
+                    # Default isometric position
+                    camera.location = (15, -15, 10)
+                    camera.rotation_euler = (1.1, 0, 0.785)  # ~63°, 0°, ~45°
+            
             # Set up output file path
             if output_path:
                 render_path = output_path
             else:
                 temp_dir = tempfile.gettempdir()
-                render_path = os.path.join(temp_dir, f"floor_plan_{view_type}_{int(time.time())}.png")
+                render_path = os.path.join(temp_dir, f"drawing_{view_type}_{int(time.time())}.png")
             
             scene.render.filepath = render_path
             scene.render.image_settings.file_format = 'PNG'
@@ -1236,7 +1285,7 @@ class BlenderMCPServer:
                 pass
                 
             import traceback
-            return {"error": f"Error creating floor plan: {str(e)}", 
+            return {"error": f"Error creating drawing: {str(e)}", 
                     "traceback": traceback.format_exc()}
 
 

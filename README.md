@@ -186,7 +186,7 @@ This repo includes eleven IFC-specific tools that enable comprehensive querying 
 
 **get_ifc_quantities**: Calculate and get quantities (m2, m3, etc.) for IFC elements, with options to filter by entity type or selected ones. Example: "Give me the area of all the walls in the building using the tool get_ifc_quantities"
 
-**export_floor_plan_png**: Exports floor plans and building sections as high-resolution PNG images with customizable resolution and view parameters. Creates orthographic plan views from above at specified height offsets. Example: "Generate a floor plan PNG for the ground floor at 1920x1080 resolution"
+**export_drawing_png**: Exports 2D and 3D drawings as high-resolution PNG images with customizable resolution and view parameters. Creates orthographic plan views from above at specified height offsets. Example: "Generate a floor plan PNG for the ground floor at 1920x1080 resolution"
 
 ## MCP Resources
 
@@ -196,9 +196,9 @@ This integration provides access to structured documentation through MCP resourc
 
 ## MCP Prompts
 
-The server includes specialized prompts for automated report generation:
+The server includes specialized MCP Prompts for automated report generation:
 
-**Technical_building_report**: Generates comprehensive technical building reports based on IFC models loaded in Blender. This prompt provides a structured workflow for creating professional architectural documentation in multiple languages (English, Spanish, French, German, Italian, Portuguese). The prompt guides the analysis through systematic data extraction from the IFC model, including spatial structure, quantities, materials, and building systems, culminating in a complete technical report with floor plans and 3D visualizations.
+**Technical_building_report**: Generates comprehensive technical building reports based on IFC models loaded in Blender. This prompt provides a structured workflow for creating professional architectural documentation in multiple languages (English, Spanish, French, German, Italian, Portuguese). The prompt guides the analysis through systematic data extraction from the IFC model, including spatial structure, quantities, materials, and building systems, culminating in a complete technical report with drawings and 3D visualizations.
 
 ## Execute Blender Code
 
