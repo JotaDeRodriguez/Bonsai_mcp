@@ -1,7 +1,7 @@
 
 # Bonsai-mcp - Model Context Protocol Integration for IFC through IfcOpenShell and Blender
 
-Bonsai-mcp is a fork of [BlenderMCP](https://github.com/ahujasid/blender-mcp) that extends the original functionality with dedicated support for IFC (Industry Foundation Classes) models through Bonsai (previously called BlenderBIM). This integration is a platform to let LLMs read and modify IFC files.
+Bonsai-mcp is a fork of [BlenderMCP](https://github.com/ahujasid/blender-mcp) that extends the original functionality with dedicated support for IFC (Industry Foundation Classes) models through Bonsai. This integration is a platform to let LLMs read and modify IFC files.
 
 ## Features
 
@@ -164,7 +164,7 @@ Once connected, you'll see a hammer icon in Claude's interface with tools for th
 
 ## IFC Tools
 
-This repo includes eleven IFC-specific tools that enable comprehensive querying and manipulation of IFC models:
+This repo includes multiple IFC-specific tools that enable comprehensive querying and manipulation of IFC models:
 
 **get_ifc_project_info**: Retrieves basic information about the IFC project, including name, description, and counts of different entity types. Example: "What is the basic information about this IFC project?"
 
@@ -187,6 +187,10 @@ This repo includes eleven IFC-specific tools that enable comprehensive querying 
 **get_ifc_quantities**: Calculate and get quantities (m2, m3, etc.) for IFC elements, with options to filter by entity type or selected ones. Example: "Give me the area of all the walls in the building using the tool get_ifc_quantities"
 
 **export_drawing_png**: Exports 2D and 3D drawings as high-resolution PNG images with customizable resolution and view parameters. Creates orthographic plan views from above at specified height offsets. Example: "Generate a floor plan PNG for the ground floor at 1920x1080 resolution"
+
+**get_ifc_georeferencing_info**: Retrieves comprehensive georeferencing information from IFC files including coordinate reference systems (CRS), map conversions, world coordinate systems, true north direction, and site geographic coordinates. Example: "What georeferencing information is available in this IFC model?"
+
+**georeference_ifc_model**: Creates or updates georeferencing information in IFC models, allowing you to set coordinate reference systems using EPSG codes or custom CRS definitions, establish map conversions with eastings/northings coordinates, and configure site geographic positioning. Example: "Georeference this IFC model using EPSG:4326 with coordinates at latitude 40.7589, longitude -73.9851"
 
 ## MCP Resources
 
