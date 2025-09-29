@@ -859,6 +859,155 @@ def export_drawing_png(
         return { "status": "error", "message": str(e) }
 
 @mcp.tool()
+def get_ifc_georeferencing_info(include_contexts: bool = False) -> str:
+    """
+    Checks whether the IFC currently opened in Bonsai/BlenderBIM is georeferenced
+    and returns the key georeferencing information.
+
+    Parameters
+    ----------
+    include_contexts : bool
+        If True, adds a breakdown of the RepresentationContexts and operations.
+        
+
+    Returns
+    --------
+    str (JSON pretty-printed)
+        {
+          "georeferenced": true|false,
+          "crs": {
+            "name": str|null,
+            "geodetic_datum": str|null,
+            "vertical_datum": str|null,
+            "map_unit": str|null
+          },
+          "map_conversion": {
+            "eastings": float|null,
+            "northings": float|null,
+            "orthogonal_height": float|null,
+            "scale": float|null,
+            "x_axis_abscissa": float|null,
+            "x_axis_ordinate": float|null
+          },
+          "world_coordinate_system": {
+            "origin": [x, y, z]|null
+          },
+          "true_north": {
+            "direction_ratios": [x, y]|null
+          },
+          "site": {
+            "local_placement_origin": [x, y, z]|null,
+            "ref_latitude": [deg, min, sec, millionth]|null,
+            "ref_longitude": [deg, min, sec, millionth]|null,
+            "ref_elevation": float|null
+          },
+          "contexts": [...],              # only if include_contexts = true
+          "warnings": [ ... ]             # Informational message
+        }
+
+    Notes
+    -----
+    - This tool acts as a wrapper: it sends the "get_ifc_georeferencing_info"
+      command to the Blender add-on. The add-on must implement that logic
+      (reading IfcProject/IfcGeometricRepresentationContext, IfcMapConversion,
+      TargetCRS, IfcSite.RefLatitude/RefLongitude/RefElevation, etc.).
+    - It always returns a JSON string with indentation for easier reading.
+    """
+    blender = get_blender_connection()
+    params = {
+        "include_contexts": bool(include_contexts)
+    }
+
+    try:
+        result = blender.send_command("get_ifc_georeferencing_info", params)
+        # Ensures that the result is serializable and easy to read
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.exception("get_ifc_georeferencing_info error")
+        return json.dumps(
+            {
+                "georeferenced": False,
+                "error": "Unable to retrieve georeferencing information from the IFC model.",
+                "details": str(e)
+            },
+            ensure_ascii=False,
+            indent=2
+        )
+
+@mcp.tool()
+def georeference_ifc_model(
+    crs_mode: str,
+    epsg: int = None,
+    crs_name: str = None,
+    geodetic_datum: str = None,
+    map_projection: str = None,
+    map_zone: str = None,
+    eastings: float = None,
+    northings: float = None,
+    orthogonal_height: float = 0.0,
+    scale: float = 1.0,
+    x_axis_abscissa: float = None,
+    x_axis_ordinate: float = None,
+    true_north_azimuth_deg: float = None,
+    context_filter: str = "Model",
+    context_index: int = None,
+    site_ref_latitude: list = None,      # [deg, min, sec, millionth]
+    site_ref_longitude: list = None,     # [deg, min, sec, millionth]
+    site_ref_elevation: float = None,
+    site_ref_latitude_dd: float = None,  # Decimal degrees (optional)
+    site_ref_longitude_dd: float = None, # Decimal degrees (optional)
+    overwrite: bool = False,
+    dry_run: bool = False,
+    write_path: str = None,
+) -> str:
+    """
+    Georeferences the IFC currently opened in Bonsai/BlenderBIM by creating or 
+    updating IfcProjectedCRS and IfcMapConversion. Optionally updates IfcSite 
+    and writes the file to disk.
+    """
+    import json
+    blender = get_blender_connection()
+
+    # Build params excluding None values to keep the payload clean
+    params = {
+        "crs_mode": crs_mode,
+        "epsg": epsg,
+        "crs_name": crs_name,
+        "geodetic_datum": geodetic_datum,
+        "map_projection": map_projection,
+        "map_zone": map_zone,
+        "eastings": eastings,
+        "northings": northings,
+        "orthogonal_height": orthogonal_height,
+        "scale": scale,
+        "x_axis_abscissa": x_axis_abscissa,
+        "x_axis_ordinate": x_axis_ordinate,
+        "true_north_azimuth_deg": true_north_azimuth_deg,
+        "context_filter": context_filter,
+        "context_index": context_index,
+        "site_ref_latitude": site_ref_latitude,
+        "site_ref_longitude": site_ref_longitude,
+        "site_ref_elevation": site_ref_elevation,
+        "site_ref_latitude_dd": site_ref_latitude_dd,
+        "site_ref_longitude_dd": site_ref_longitude_dd,
+        "overwrite": overwrite,
+        "dry_run": dry_run,
+        "write_path": write_path,
+    }
+    params = {k: v for k, v in params.items() if v is not None}
+
+    try:
+        result = blender.send_command("georeference_ifc_model", params)
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.exception("georeference_ifc_model error")
+        return json.dumps(
+            {"success": False, "error": "Could not georeference the model.", "details": str(e)},
+            ensure_ascii=False,
+            indent=2,
+        )
+
+@mcp.tool()
 def sequentialthinking(
     thought: str,
     thoughtNumber: int,
