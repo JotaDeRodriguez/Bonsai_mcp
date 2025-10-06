@@ -186,11 +186,57 @@ This repo includes multiple IFC-specific tools that enable comprehensive queryin
 
 **get_ifc_quantities**: Calculate and get quantities (m2, m3, etc.) for IFC elements, with options to filter by entity type or selected ones. Example: "Give me the area of all the walls in the building using the tool get_ifc_quantities"
 
+**get_ifc_total_structure**: Retrieves the complete hierarchical structure of the IFC model including spatial elements (Project, Site, Building, Storeys) and all building elements within each spatial container. This comprehensive view combines spatial hierarchy with building elements, essential for generating complete reports and budgets. Example: "Show me the complete structure of this IFC model including all building elements organized by floor"
+
 **export_drawing_png**: Exports 2D and 3D drawings as high-resolution PNG images with customizable resolution and view parameters. Creates orthographic plan views from above at specified height offsets. Example: "Generate a floor plan PNG for the ground floor at 1920x1080 resolution"
 
 **get_ifc_georeferencing_info**: Retrieves comprehensive georeferencing information from IFC files including coordinate reference systems (CRS), map conversions, world coordinate systems, true north direction, and site geographic coordinates. Example: "What georeferencing information is available in this IFC model?"
 
 **georeference_ifc_model**: Creates or updates georeferencing information in IFC models, allowing you to set coordinate reference systems using EPSG codes or custom CRS definitions, establish map conversions with eastings/northings coordinates, and configure site geographic positioning. Example: "Georeference this IFC model using EPSG:4326 with coordinates at latitude 40.7589, longitude -73.9851"
+
+**export_bc3_budget**: Exports a BC3 budget file (FIEBDC-3/2016 format) based on the IFC model loaded in Blender. This tool creates a complete construction budget by extracting the IFC spatial structure, grouping building elements by type and category (structure, masonry, slabs, carpentry, installations, furniture), assigning unit prices from a comprehensive database, and generating detailed measurements. Supports multi-language output (Spanish/English) with proper encoding for international characters. The BC3 format is the Spanish standard for construction budgets and cost estimation. Example: "Generate a BC3 budget file in Spanish for this building model"
+
+### Features
+
+- **Automatic element categorization**: Building elements are automatically classified into categories:
+  - **ESTR**: Structural elements (beams, columns, footings, piles, ramps, stairs)
+  - **ALB**: Masonry (walls)
+  - **FORG**: Slabs and roofs
+  - **CARP**: Carpentry (doors, windows)
+  - **INST**: Installations (pipes, fittings, terminals, railings)
+  - **MOB**: Furniture
+
+- **Accurate measurements**:
+  - Walls measured by NetSideArea (accounts for openings like doors and windows)
+  - Slabs and roofs measured by GrossVolume
+  - Beams, columns, and piles measured by length (meters)
+  - Doors, windows, and furniture counted as units
+
+- **Multi-language support**: Generate budgets in Spanish or English with proper character encoding (windows-1252)
+
+- **Hierarchical structure**: Budget chapters follow the IFC spatial hierarchy (Project → Site → Building → Storey)
+
+- **Unit price database**: Includes comprehensive unit prices for common construction elements, fully customizable via JSON files
+
+- **Sorted measurements**: Elements within each category are sorted alphabetically for easier review
+
+### Configuration Files
+
+The BC3 export uses external JSON configuration files located in `resources/bc3_helper_files/`:
+
+- `precios_unitarios.json` / `unit_prices.json`: Unit prices per IFC element type
+- `spatial_labels_es.json` / `spatial_labels_en.json`: Spatial element translations
+- `element_categories.json`: IFC type to budget category mappings
+
+These files can be customized to adapt the budget generation to specific project needs or regional pricing standards.
+
+### Output
+
+BC3 files are exported to the `exports/` folder with proper FIEBDC-3/2016 format, including:
+- Complete hierarchical chapter structure
+- Detailed measurements for each element
+- Unit prices and totals
+- Full compliance with Spanish construction budget standard bc3
 
 ## MCP Resources
 
@@ -231,6 +277,10 @@ Here are some examples of what you can ask Claude to do with IFC models:
 - "Generate a report of the measurements from the IFC model opened in Blender"
 
 - "Use sequential thinking to create a maintenance plan for this building based on the IFC model"
+
+- "Generate a BC3 budget file in Spanish for the current IFC model"
+
+- "Export a construction cost estimate to BC3 format with English descriptions"
 
 ## Troubleshooting
 

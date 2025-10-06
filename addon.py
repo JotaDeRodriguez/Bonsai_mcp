@@ -208,6 +208,7 @@ class BlenderMCPServer:
             "list_ifc_entities": self.list_ifc_entities,
             "get_ifc_properties": self.get_ifc_properties,
             "get_ifc_spatial_structure": self.get_ifc_spatial_structure,
+            "get_ifc_total_structure": self.get_ifc_total_structure,
             "get_ifc_relationships": self.get_ifc_relationships,
             "get_selected_ifc_entities": self.get_selected_ifc_entities,
             "get_current_view": self.get_current_view,
@@ -564,6 +565,83 @@ class BlenderMCPServer:
             structure = create_structure(projects[0])
             
             return structure
+        except Exception as e:
+            import traceback
+            return {"error": str(e), "traceback": traceback.format_exc()}
+
+    @staticmethod
+    def get_ifc_total_structure():
+        """
+        Get the complete IFC structure including spatial hierarchy and building elements.
+        This function extends the spatial structure to include building elements like walls,
+        doors, windows, etc. that are contained in each spatial element.
+
+        Returns:
+            Complete hierarchical structure with spatial elements and their contained building elements
+        """
+        try:
+            file = IfcStore.get_file()
+            if file is None:
+                return {"error": "No IFC file is currently loaded"}
+
+            # Start with projects
+            projects = file.by_type("IfcProject")
+            if not projects:
+                return {"error": "No IfcProject found in the model"}
+
+            def get_spatial_children(parent):
+                """Get immediate spatial children of the given element"""
+                if hasattr(parent, "IsDecomposedBy"):
+                    rel_aggregates = parent.IsDecomposedBy
+                    children = []
+                    for rel in rel_aggregates:
+                        children.extend(rel.RelatedObjects)
+                    return children
+                return []
+
+            def get_contained_elements(spatial_element):
+                """Get building elements contained in this spatial element"""
+                contained_elements = []
+
+                # Check for IfcRelContainedInSpatialStructure relationships
+                if hasattr(spatial_element, "ContainsElements"):
+                    for rel in spatial_element.ContainsElements:
+                        for element in rel.RelatedElements:
+                            element_info = {
+                                "id": element.GlobalId,
+                                "type": element.is_a(),
+                                "name": element.Name if hasattr(element, "Name") else None,
+                                "description": element.Description if hasattr(element, "Description") else None
+                            }
+                            contained_elements.append(element_info)
+
+                return contained_elements
+
+            def create_total_structure(element):
+                """Recursively create the complete structure for an element"""
+                result = {
+                    "id": element.GlobalId,
+                    "type": element.is_a(),
+                    "name": element.Name if hasattr(element, "Name") else None,
+                    "description": element.Description if hasattr(element, "Description") else None,
+                    "children": [],
+                    "building_elements": []
+                }
+
+                # Add spatial children (other spatial elements)
+                for child in get_spatial_children(element):
+                    result["children"].append(create_total_structure(child))
+
+                # Add contained building elements (walls, doors, windows, etc.)
+                result["building_elements"] = get_contained_elements(element)
+
+                return result
+
+            # Create the complete structure starting from the project
+            total_structure = create_total_structure(projects[0])
+
+            return total_structure
+
         except Exception as e:
             import traceback
             return {"error": str(e), "traceback": traceback.format_exc()}
@@ -952,13 +1030,25 @@ class BlenderMCPServer:
             file = IfcStore.get_file()
             if file is None:
                 return {"error": "No IFC file is currently loaded"}
-            
-            # First, calculate all quantities
-            try:
-                bpy.ops.bim.perform_quantity_take_off()
-            except Exception as e:
-                return {"error": f"Failed to calculate quantities: {str(e)}"}
-            
+
+            # Check if BaseQuantities already exist to avoid re-calculating
+            quantities_exist = False
+            sample_elements = file.by_type("IfcElement")[:10] if file.by_type("IfcElement") else []
+
+            for elem in sample_elements:
+                psets = ifcopenshell.util.element.get_psets(elem)
+                if any(qset in psets for qset in ["BaseQuantities", "Qto_WallBaseQuantities",
+                                                   "Qto_SlabBaseQuantities", "Qto_BeamBaseQuantities"]):
+                    quantities_exist = True
+                    break
+
+            # Only calculate quantities if they don't exist yet
+            if not quantities_exist:
+                try:
+                    bpy.ops.bim.perform_quantity_take_off()
+                except Exception as e:
+                    return {"error": f"Failed to calculate quantities: {str(e)}"}
+
             elements_data = []
             
             # If we're only looking at selected objects
@@ -1823,48 +1913,14 @@ def extract_quantities(entity, blender_name=None):
         quantity_sources = ["BaseQuantities", "ArchiCADQuantities", "Qto_WallBaseQuantities", 
                            "Qto_SlabBaseQuantities", "Qto_BeamBaseQuantities", "Qto_ColumnBaseQuantities"]
         
-        # Common quantity mappings
-        quantity_mappings = {
-            # Area measurements
-            "GrossSideArea": "area",
-            "NetSideArea": "net_area", 
-            "GrossFootprintArea": "footprint_area",
-            "NetFootprintArea": "net_footprint_area",
-            "Oberflächenbereich": "surface_area",
-            
-            # Volume measurements
-            "GrossVolume": "volume",
-            "NetVolume": "net_volume",
-            "Netto-Volumen": "net_volume_de",
-            "Brutto-Volumen der Wand ": "gross_volume_de",
-            
-            # Length measurements
-            "Length": "length",
-            "Height": "height",
-            "Width": "width",
-            "Höhe": "height_de",
-            "Dicke": "thickness",
-            
-            # Other measurements
-            "Fläche": "area_de",
-            "Wandlänge an der Außenseite": "outer_length",
-            "Wandlänge an der Innenseite": "inner_length"
-        }
-        
-        # Extract quantities from property sets
+        # Extract quantities from property sets - keep original names
         for pset_name in quantity_sources:
             if pset_name in psets:
                 pset_data = psets[pset_name]
                 for prop_name, prop_value in pset_data.items():
-                    if prop_name in quantity_mappings and isinstance(prop_value, (int, float)):
-                        mapped_name = quantity_mappings[prop_name]
-                        element_data["quantities"][mapped_name] = prop_value
-        
-        # Add common derived quantities if available
-        if "area" in element_data["quantities"]:
-            element_data["quantities"]["area_m2"] = element_data["quantities"]["area"]
-        if "volume" in element_data["quantities"]:
-            element_data["quantities"]["volume_m3"] = element_data["quantities"]["volume"]
+                    # Only include numeric values and skip the 'id' field
+                    if isinstance(prop_value, (int, float)) and prop_name != 'id':
+                        element_data["quantities"][prop_name] = prop_value
             
         return element_data if element_data["quantities"] else None
         

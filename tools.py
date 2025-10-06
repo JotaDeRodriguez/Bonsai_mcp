@@ -13,6 +13,7 @@ import base64
 from urllib.parse import urlparse
 from typing import Optional
 import sys
+from bc3_writer import IFC2BC3Converter
 
 
 # Configure logging
@@ -357,7 +358,6 @@ def get_ifc_properties(global_id: str | None = None, selected_only: bool = False
         logger.error(f"Error getting IFC properties: {str(e)}")
         return f"Error getting IFC properties: {str(e)}"
     
-    
 @mcp.tool()
 def get_ifc_spatial_structure() -> str:
     """
@@ -375,6 +375,30 @@ def get_ifc_spatial_structure() -> str:
     except Exception as e:
         logger.error(f"Error getting IFC spatial structure: {str(e)}")
         return f"Error getting IFC spatial structure: {str(e)}"
+
+@mcp.tool()
+def get_ifc_total_structure() -> str:
+    """
+    Get the complete IFC structure including spatial hierarchy and all building elements.
+
+    This function extends the basic spatial structure to include building elements like walls,
+    doors, windows, columns, beams, etc. that are contained within each spatial element.
+    It provides a comprehensive view of how the building is organized both spatially and
+    in terms of its physical components.
+
+    Returns:
+        A JSON-formatted string representing the complete hierarchical structure of the IFC model
+        including spatial elements and their contained building elements, plus summary statistics
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("get_ifc_total_structure")
+
+        # Return the formatted JSON of the results
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error getting IFC total structure: {str(e)}")
+        return f"Error getting IFC total structure: {str(e)}"
 
 @mcp.tool()
 def get_ifc_relationships(global_id: str) -> str:
@@ -399,7 +423,6 @@ def get_ifc_relationships(global_id: str) -> str:
         logger.error(f"Error getting IFC relationships: {str(e)}")
         return f"Error getting IFC relationships: {str(e)}"
     
-
 @mcp.tool()
 def export_ifc_data(
     entity_type: str | None = None, 
@@ -448,7 +471,6 @@ def export_ifc_data(
         logger.error(f"Error exporting IFC data: {str(e)}")
         return f"Error exporting IFC data: {str(e)}"
     
-
 @mcp.tool()
 def place_ifc_object(
     type_name: str, 
@@ -502,7 +524,6 @@ def place_ifc_object(
     except Exception as e:
         logger.error(f"Error placing IFC object: {str(e)}")
         return f"Error placing IFC object: {str(e)}"
-    
     
 @mcp.tool()
 def get_user_view() -> Image:
@@ -589,7 +610,6 @@ def get_user_view() -> Image:
         # logger.error(f"Error processing viewport image: {str(e)}")
         raise Exception(f"Error processing viewport image: {str(e)}")
 
-
 @mcp.tool()
 def get_ifc_quantities() -> str:
     """
@@ -608,6 +628,68 @@ def get_ifc_quantities() -> str:
         logger.error(f"Error getting IFC project quantities: {str(e)}")
         return f"Error getting IFC project quantities: {str(e)}"
 
+@mcp.tool()
+def export_bc3_budget(language: str = 'es') -> str:
+    """
+    Export a BC3 budget file (FIEBDC-3/2016) based on the IFC model loaded in Blender.
+
+    This tool creates a complete construction budget in BC3 format by:
+    1. Extracting the complete IFC spatial structure (Project → Site → Building → Storey)
+    2. Extracting IFC quantities and measurements for all building elements
+    3. Converting to BC3 hierarchical format with IFC2BC3Converter:
+       - Generates budget chapters from IFC spatial hierarchy
+       - Groups building elements by type and categories defined in external JSON
+       - Assigns unit prices from language-specific JSON database
+       - Creates detailed measurements sorted alphabetically
+    4. Exports to BC3 file with windows-1252 encoding
+
+    Features:
+    - Multi-language support (Spanish/English) for descriptions and labels
+    - Automatic element categorization using external JSON configuration
+    - Optimized conversion with O(1) lookups and batch operations
+    - Detailed measurements with dimensions (units, length, width, height)
+    - Full FIEBDC-3/2016 format compliance
+
+    Configuration files (in resources/bc3_helper_files/):
+    - precios_unitarios.json / unit_prices.json: Unit prices per IFC type
+    - spatial_labels_es.json / spatial_labels_en.json: Spatial element translations
+    - element_categories.json: IFC type to category mappings
+
+    Args:
+        language: Language for the budget file ('es' for Spanish, 'en' for English). Default is 'es'.
+
+    Returns:
+        A confirmation message with the path to the generated BC3 file in the exports/ folder.
+    """
+    try:
+        # Get IFC data
+        logger.info("Getting IFC data...")
+        ifc_total_structure = get_ifc_total_structure()
+        ifc_quantities = get_ifc_quantities()
+
+        # Validate that we got valid JSON responses
+        # If there's an error, these functions return error strings starting with "Error"
+        if isinstance(ifc_total_structure, str) and ifc_total_structure.startswith("Error"):
+            return f"Failed to get IFC structure: {ifc_total_structure}"
+
+        if isinstance(ifc_quantities, str) and ifc_quantities.startswith("Error"):
+            return f"Failed to get IFC quantities: {ifc_quantities}"
+
+        # Try to parse the JSON to ensure it's valid
+        try:
+            structure_data = json.loads(ifc_total_structure) if isinstance(ifc_total_structure, str) else ifc_total_structure
+            quantities_data = json.loads(ifc_quantities) if isinstance(ifc_quantities, str) else ifc_quantities
+        except json.JSONDecodeError as e:
+            return f"Invalid JSON data received from Blender. Structure error: {str(e)}"
+
+        converter = IFC2BC3Converter(structure_data, quantities_data, language=language)
+        output_path = converter.export()
+
+        return f"BC3 file successfully created at: {output_path}"
+
+    except Exception as e:
+        logger.error(f"Error creating BC3 budget: {str(e)}")
+        return f"Error creating BC3 budget: {str(e)}"
 
 # WIP, not ready to be implemented:  
 # @mcp.tool()
