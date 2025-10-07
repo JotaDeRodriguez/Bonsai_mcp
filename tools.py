@@ -980,17 +980,17 @@ def georeference_ifc_model(
 # Base path of the resource files
 BASE_PATH = Path("./resources")
 
-@mcp.resource("file://table_of_contents.md")
+@mcp.resource("file://table_of_contents.json")
 def formulas_rp() -> str:
-    """Leer el contenido del archivo table_of_contents.md"""
-    file_path = BASE_PATH / "table_of_contents.md"
+    """Read the content of table_of_contents.json file"""
+    file_path = BASE_PATH / "table_of_contents.json"
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             return f.read()
     except FileNotFoundError:
-        return f"Error: No se encontró el archivo {file_path}"
+        return f"Error: File not found {file_path}"
     except Exception as e:
-        return f"Error al leer el archivo: {str(e)}"
+        return f"Error reading file: {str(e)}"
 
 
 # -------------------------------
@@ -1067,7 +1067,7 @@ def technical_building_report(project_name: str, project_location: str, language
 - **Use MCP tool:** `get_user_view` to capture a general view of the model
 
 ### 2. OBTAIN TABLE OF CONTENTS
-- **Access MCP resource:** `file://table_of_contents.md` to get the complete technical report structure
+- **Access MCP resource:** `file://table_of_contents.json` to get the complete technical report structure
 
 ### 3. DETAILED ANALYSIS BY SECTIONS
 
@@ -1101,7 +1101,7 @@ def technical_building_report(project_name: str, project_location: str, language
 
 ### 4. TECHNICAL REPORT STRUCTURE
 
-Organize the document following exactly the structure from the `table_of_contents.md` resource:
+Organize the document following exactly the structure from the `table_of_contents.json` resource:
 
 **TECHNICAL REPORT – BASIC PROJECT: {project_name}**
 
