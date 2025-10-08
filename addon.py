@@ -218,6 +218,7 @@ class BlenderMCPServer:
             "export_drawing_png": self.export_drawing_png,
             "get_ifc_georeferencing_info": self.get_ifc_georeferencing_info,
             "georeference_ifc_model": self.georeference_ifc_model,
+            "generate_ids": self.generate_ids,
         }
         
 
@@ -1881,6 +1882,684 @@ class BlenderMCPServer:
             "actions": actions,
         }
     
+    @staticmethod
+    def generate_ids(
+        title: str,
+        specs: list,
+        description: str = "",
+        author: str = "",
+        ids_version: str = "",
+        purpose: str = "",
+        milestone: str = "",
+        output_path: str = None,
+        date_iso: str = None,
+    ):
+        """
+        Generates an .ids file with robust handling of:
+            - Synonyms: 'name' → 'baseName', 'minValue/maxValue' + inclusivity, 'minOccurs/maxOccurs' → cardinality.
+            - Operators inside 'value' ("> 30", "≤0.45"), in keys (op/target/threshold/limit), and extracted from 'description'
+            (ONLY within requirements; never in applicability).
+            - Correct restriction mapping:
+                * Numeric → ids.Restriction(base="double" | "integer", options={...})
+                * Textual (IFCLABEL/TEXT) → ids.Restriction(base="string", options={"pattern": [anchored regexes]})
+            - Automatic dataType inference with hints 
+            (ThermalTransmittance → IFCTHERMALTRANSMITTANCEMEASURE, IsExternal → IFCBOOLEAN, etc.).
+            - PredefinedType remains as an Attribute within APPLICABILITY 
+            (NOT absorbed into Entity.predefinedType).
+        """
+        
+        #Libraries/Dependencies
+        # -----------------------------------------------------------------------------------------------------------
+        try:
+            from ifctester import ids
+        except Exception as e:
+            return {"ok": False, "error": "Could not import ifctester.ids", "details": str(e)}
+
+        import os, datetime, re
+        from numbers import Number
+
+        #Validations
+        # -----------------------------------------------------------------------------------------------------------    
+        if not isinstance(title, str) or not title.strip():
+            return {"ok": False, "error": "Invalid or empty 'title' parameter."}
+        if not isinstance(specs, list) or len(specs) == 0:
+            return {"ok": False, "error": "You must provide at least one specification in 'specs'."}
+
+        # Utils
+        # -----------------------------------------------------------------------------------------------------------
+        def _norm_card(c):
+            """
+            Usage:
+                Normalizes the given cardinality value, ensuring it matches one of the valid terms.
+            Inputs:
+                c (str | None): Cardinality value to normalize. Can be 'required', 'optional', or 'prohibited'.
+            Output:
+                str | None: Normalized lowercase value if valid, or None if not provided.
+            Exceptions:
+                ValueError: Raised if the input value does not correspond to a valid cardinality.
+            """
+            if c is None: return None
+            c = str(c).strip().lower()
+            if c in ("required", "optional", "prohibited"): return c
+            raise ValueError("Invalid cardinality: use 'required', 'optional', or 'prohibited'.")
+
+        def _card_from_occurs(minOccurs, maxOccurs):
+            """
+            Usage:
+                Derives the cardinality ('required' or 'optional') based on the values of minOccurs and maxOccurs.
+            Inputs:
+                minOccurs (int | str | None): Minimum number of occurrences. If greater than 0, the field is considered 'required'.
+                maxOccurs (int | str | None): Maximum number of occurrences. Not used directly, included for completeness.
+            Output:
+                str | None: Returns 'required' if minOccurs > 0, 'optional' if minOccurs == 0, or None if conversion fails.
+            """
+            try:
+                if minOccurs is None: return None
+                m = int(minOccurs)
+                return "required" if m > 0 else "optional"
+            except Exception:
+                return None
+
+        def _is_bool_like(v):
+            """
+            Usage:
+                Checks whether a given value can be interpreted as a boolean.
+            Inputs:
+                v (any): Value to evaluate. Can be of any type (bool, str, int, etc.).
+            Output:
+                bool: Returns True if the value represents a boolean-like token 
+                    (e.g., True, False, "yes", "no", "1", "0", "y", "n", "t", "f"), 
+                    otherwise returns False.
+            """
+            if isinstance(v, bool): return True
+            if v is None: return False
+            s = str(v).strip().lower()
+            return s in ("true", "false", "1", "0", "yes", "no", "y", "n", "t", "f")
+
+        def _to_bool_token(v):
+            """
+            Usage:
+                Converts a boolean-like value into a standardized string token ("TRUE" or "FALSE").
+            Inputs:
+                v (any): Value to convert. Can be a boolean, string, or numeric value representing truthiness.
+            Output:
+                str | None: Returns "TRUE" or "FALSE" if the value matches a recognized boolean pattern,
+                            or None if it cannot be interpreted as boolean.
+            """        
+            if isinstance(v, bool): return "TRUE" if v else "FALSE"
+            s = str(v).strip().lower()
+            if s in ("true", "1", "yes", "y", "t"): return "TRUE"
+            if s in ("false", "0", "no", "n", "f"): return "FALSE"
+            return None
+
+        # Hints for *MEASURE* types and by property name
+        MEASURE_HINTS = {
+            "THERMALTRANSMITTANCE": "IFCTHERMALTRANSMITTANCEMEASURE",
+            "UVALUE": "IFCTHERMALTRANSMITTANCEMEASURE",
+            "RATIOMEASURE": "IFCRATIOMEASURE",
+            "AREAMEASURE": "IFCAREAMEASURE",
+            "LENGTHMEASURE": "IFCLENGTHMEASURE",
+            "SOUNDPRESSURELEVELMEASURE": "IFCSOUNDPRESSURELEVELMEASURE",
+        }
+        PROPERTY_DATATYPE_HINTS = {
+            "THERMALTRANSMITTANCE": "IFCTHERMALTRANSMITTANCEMEASURE",
+            "ISEXTERNAL": "IFCBOOLEAN",
+            "ACOUSTICRATING": "IFCLABEL",
+        }
+
+        def _norm_ifc_version(v: str | None) -> str | None:
+            """
+            Usage:
+                Normalizes the given IFC schema version string to a standardized format.
+            Inputs:
+                v (str | None): Input version value (e.g., "4", "IFC 4", "2x3", "IFC4.3").
+            Output:
+                str | None: Returns the normalized IFC version (e.g., "IFC4", "IFC2X3", "IFC4X3"),
+                            or None if the input is empty or invalid.
+            """
+            if not v: return None
+            s = str(v).strip().upper()
+            m = {"4": "IFC4", "IFC 4": "IFC4", "2X3": "IFC2X3", "IFC 2X3": "IFC2X3", "IFC4.3": "IFC4X3"}
+            return m.get(s, s)
+
+        def _strip_ifc_prefix(dt: str | None) -> str | None:
+            """
+            Usage:
+                Removes leading and trailing spaces from the given string and converts it to uppercase.
+                Typically used to normalize IFC data type names.
+            Inputs:
+                dt (str | None): Data type string to normalize (e.g., " ifcreal ").
+            Output:
+                str | None: Uppercase, trimmed string (e.g., "IFCREAL"), or None if the input is empty or None.
+            """       
+            return dt.strip().upper() if dt else None
+
+        def _is_number_like(v) -> bool:
+            """
+            Usage:
+                Checks whether the given value can be interpreted as a numeric value.
+            Inputs:
+                v (any): Value to evaluate. Can be of any type (int, float, str, etc.).
+            Output:
+                bool: Returns True if the value represents a number (including numeric strings like "3.5" or "2,7"),
+                    otherwise returns False.
+            """
+            if isinstance(v, Number): return True
+            if v is None: return False
+            try:
+                float(str(v).strip().replace(",", "."))
+                return True
+            except Exception:
+                return False
+
+        def _guess_numeric_base_from_ifc(dt_upper: str | None) -> str:
+            """
+            Usage:
+                Determines the numeric base type ('integer' or 'double') from an IFC data type string.
+            Inputs:
+                dt_upper (str | None): Uppercase IFC data type name (e.g., "IFCINTEGER", "IFCREAL").
+            Output:
+                str: Returns "integer" if the type contains "INTEGER"; otherwise returns "double".
+                    Defaults to "double" when no input is provided.
+            """
+            if not dt_upper: return "double"
+            if "INTEGER" in dt_upper: return "integer"
+            return "double"
+
+        # comparators in string ("> 30", "<=0.45", "≥3", "≤ 3")
+        _cmp_regex = re.compile(r"^\s*(>=|=>|≤|<=|≥|>|<)\s*([0-9]+(?:[.,][0-9]+)?)\s*$")
+        _normalize_op = {">=":">=", "=>":">=", "≥":">=", "<=":"<=", "≤":"<="}
+        
+        def _extract_op_target_from_string(s: str):
+            """
+                Usage:
+                    Extracts a comparison operator and its numeric target value from a string expression.
+                Inputs:
+                    s (str): String containing a comparison, e.g., "> 30", "<=0.45", "≥3", or "≤ 3".
+                Output:
+                    tuple(str | None, float | None): Returns a tuple (operator, target_value),
+                                                    where operator is one of ">", ">=", "<", or "<=".
+                                                    Returns (None, None) if the string does not match a valid pattern.
+            """
+            m = _cmp_regex.match(s)
+            if not m: return None, None
+            op, num = m.group(1), m.group(2)
+            op = _normalize_op.get(op, op)
+            try: tgt = float(num.replace(",", "."))
+            except Exception: return None, None
+            return op, tgt
+
+        # English descriptions (>= before >)
+        _desc_ops = [
+            (r"(greater\s+than\s+or\s+equal\s+to|greater\s+or\s+equal\s+to|equal\s+or\s+greater\s+than|≥)", ">="),
+            (r"(less\s+than\s+or\s+equal\s+to|not\s+greater\s+than|≤|at\s+most|maximum)", "<="),
+            (r"(greater\s+than|more\s+than|>)", ">"),
+            (r"(less\s+than|fewer\s+than|<)", "<"),
+        ]
+        _num_regex = re.compile(r"([0-9]+(?:[.,][0-9]+)?)")
+
+        
+        def _extract_from_description(desc: str):
+            """
+            Usage:
+                Extracts a comparison operator and numeric target value from a descriptive text.
+                Designed to interpret expressions such as "greater than 30" or "less than or equal to 0.45".
+            Inputs:
+                desc (str): Description text potentially containing a numeric comparison.
+            Output:
+                tuple(str | None, float | None): Returns a tuple (operator, target_value),
+                                                where operator is one of ">", ">=", "<", or "<=",
+                                                and target_value is the numeric value extracted.
+                                                Returns (None, None) if no valid pattern is found.
+            """
+            if not desc: return None, None
+            text = desc.strip().lower()
+            for pat, op in _desc_ops:
+                if re.search(pat, text):
+                    m = _num_regex.search(text)
+                    if m:
+                        try:
+                            tgt = float(m.group(1).replace(",", "."))
+                            return op, tgt
+                        except Exception:
+                            pass
+            return None, None
+
+        # anchored regexes for integers (numeric fallback for decimals)
+        def _regex_for_threshold(threshold: float, op: str) -> list[str]:
+            """
+                Usage:
+                    Builds one or more anchored regular expressions to validate integer values 
+                    against a numeric threshold and comparison operator.
+                    For non-integer thresholds, returns a generic numeric pattern as fallback.
+                Inputs:
+                    threshold (float): Numeric limit used for the comparison (e.g., 30, 10.5).
+                    op (str): Comparison operator, one of ">", ">=", "<", or "<=".
+                Output:
+                    list[str]: A list containing one or more anchored regex patterns that match 
+                            integer strings satisfying the given condition.
+                            Returns a generic numeric regex pattern as fallback for decimals.
+            """
+            if abs(threshold - round(threshold)) < 1e-9:
+                t = int(round(threshold))
+                def gt_int(n):
+                    if n <= 8:  return rf"^([{n+1}-9]|[1-9]\d|[1-9]\d{{2,}})$"
+                    if n <= 98:
+                        tens, units = divmod(n + 1, 10)
+                        p1 = rf"{tens}[{units}-9]" if units > 0 else rf"{tens}\d"
+                        p2 = rf"[{tens+1}-9]\d" if tens < 9 else ""
+                        parts = [p1, p2, r"[1-9]\d{2,}"]
+                        return "^(" + "|".join([p for p in parts if p]) + ")$"
+                    return r"^[1-9]\d{2,}$"
+                def ge_int(n):
+                    if n <= 9:  return rf"^([{n}-9]|[1-9]\d|[1-9]\d{{2,}})$"
+                    if n <= 99:
+                        tens, units = divmod(n, 10)
+                        p1 = rf"{tens}[{units}-9]"
+                        p2 = rf"[{tens+1}-9]\d" if tens < 9 else ""
+                        parts = [p1, p2, r"[1-9]\d{2,}"]
+                        return "^(" + "|".join([p for p in parts if p]) + ")$"
+                    return r"^[1-9]\d{2,}$"
+                def lt_int(n):
+                    if n <= 0: return r"^(?!)$"
+                    if n <= 10: return rf"^[0-9]$" if n == 10 else rf"^[0-{n-1}]$"
+                    tens, units = divmod(n - 1, 10)
+                    if tens == 1: return r"^([0-9]|1[0-9])$"
+                    return rf"^([0-9]|[1-{tens-1}]\d|{tens}[0-{units}])$"
+                def le_int(n):
+                    if n < 10: return rf"^[0-{n}]$"
+                    tens, units = divmod(n, 10)
+                    if tens == 1:
+                        return r"^([0-9]|1[0-9])$" if units == 9 else rf"^([0-9]|1[0-{units}])$"
+                    parts = [r"[0-9]"]
+                    if tens > 1: parts.append(rf"[1-{tens-1}]\d")
+                    parts.append(rf"{tens}[0-{units}]")
+                    return "^(" + "|".join(parts) + ")$"
+                if   op == ">":  return [gt_int(t)]
+                elif op == ">=": return [ge_int(t)]
+                elif op == "<":  return [lt_int(t)]
+                elif op == "<=": return [le_int(t)]
+            return [r"^\d+(?:[.,]\d+)?$"]  # fallback for decimals (plain numeric string)
+
+        def _build_restriction_for_text(op: str | None, target, bounds: dict):
+            """
+            Usage:
+                Builds a text-based IDS restriction (ids.Restriction) using regex patterns derived 
+                from numeric thresholds and comparison operators. 
+                Used when a property has textual dataType (e.g., IFCLABEL) but represents numeric conditions.
+            Inputs:
+                op (str | None): Comparison operator (">", ">=", "<", "<=") if explicitly provided.
+                target (any): Target value for the comparison. Can be numeric or string.
+                bounds (dict): Dictionary of limit values such as 
+                            {"minInclusive": ..., "maxExclusive": ..., "maxInclusive": ...}.
+            Output:
+                ids.Restriction | None: Returns an ids.Restriction object with regex patterns 
+                                        for matching the specified numeric range in string form,
+                                        or None if no valid pattern can be built.
+            """
+            if op and target is not None and _is_number_like(target):
+                return ids.Restriction(base="string", options={"pattern": _regex_for_threshold(float(target), op)})
+            patterns = []
+            if bounds.get("minExclusive") is not None:
+                patterns += _regex_for_threshold(float(bounds["minExclusive"]), ">")
+            if bounds.get("minInclusive") is not None:
+                patterns += _regex_for_threshold(float(bounds["minInclusive"]), ">=")
+            if bounds.get("maxExclusive") is not None:
+                patterns += _regex_for_threshold(float(bounds["maxExclusive"]), "<")
+            if bounds.get("maxInclusive") is not None:
+                patterns += _regex_for_threshold(float(bounds["maxInclusive"]), "<=")
+            return ids.Restriction(base="string", options={"pattern": patterns}) if patterns else None
+
+        def _build_numeric_restriction(dt_upper: str | None, op: str | None, target, bounds: dict):
+            """
+            Usage:
+                Builds a numeric IDS restriction (ids.Restriction) from a data type, comparison operator, 
+                target value, and optional numeric bounds.
+            Inputs:
+                dt_upper (str | None): Uppercase IFC data type name (e.g., "IFCREAL", "IFCINTEGER").
+                op (str | None): Comparison operator (">", ">=", "<", "<=") if provided.
+                target (any): Target value for the comparison. Converted to float when applicable.
+                bounds (dict): Dictionary containing optional boundary values such as 
+                            {"minInclusive": ..., "maxExclusive": ..., "maxInclusive": ...}.
+            Output:
+                ids.Restriction | None: Returns an ids.Restriction object with the appropriate numeric limits,
+                                        or None if no valid restriction can be created.
+            """
+            if not (op or any(v is not None for v in bounds.values())): return None
+            base_num = _guess_numeric_base_from_ifc(dt_upper)
+            opts = {}
+            if op and target is not None:
+                v = float(str(target).replace(",", "."))
+                if   op == ">":  opts["minExclusive"] = v
+                elif op == ">=": opts["minInclusive"] = v
+                elif op == "<":  opts["maxExclusive"] = v
+                elif op == "<=": opts["maxInclusive"] = v
+            for k in ("minInclusive","maxInclusive","minExclusive","maxExclusive"):
+                if bounds.get(k) is not None:
+                    opts[k] = float(str(bounds[k]).replace(",", "."))
+            if not opts: return None
+            return ids.Restriction(base=base_num, options=opts)
+
+        def _infer_ids_datatype(pset: str | None, baseName: str | None,
+                                provided_dt: str | None, value, op: str | None, bounds: dict) -> str:
+            """
+            Usage:
+                Infers the appropriate IFC data type (e.g., IFCREAL, IFCINTEGER, IFCBOOLEAN, IFCLABEL)
+                for a given property based on its name, provided data type, value, and restrictions.
+            Inputs:
+                pset (str | None): Name of the property set to which the property belongs.
+                baseName (str | None): Base name of the property (e.g., "ThermalTransmittance", "IsExternal").
+                provided_dt (str | None): Data type explicitly provided in the input, if any.
+                value (any): Property value or an ids.Restriction object.
+                op (str | None): Comparison operator (">", ">=", "<", "<=") if defined.
+                bounds (dict): Dictionary containing limit values such as 
+                            {"minInclusive": ..., "maxExclusive": ..., "maxInclusive": ...}.
+            Output:
+                str: Returns the inferred IFC data type string, such as "IFCREAL", "IFCINTEGER", 
+                    "IFCBOOLEAN", or "IFCLABEL".
+            """
+            # if a dataType is provided, normalize and promote it if applicable
+            if provided_dt:
+                dtU = _strip_ifc_prefix(provided_dt)
+                if baseName and dtU in ("IFCREAL", "IFCNUMBER", "NUMBER", "REAL"):
+                    hint = PROPERTY_DATATYPE_HINTS.get(str(baseName).strip().upper())
+                    if hint: return hint
+                if dtU in MEASURE_HINTS: return MEASURE_HINTS[dtU]
+                return dtU
+            # hints by name
+            if baseName:
+                hint = PROPERTY_DATATYPE_HINTS.get(str(baseName).strip().upper())
+                if hint: return hint
+            # value = Restriction
+            if isinstance(value, ids.Restriction):
+                base = getattr(value, "base", "").lower()
+                if base in ("integer",): return "IFCINTEGER"
+                if base in ("double","number","real","float"): return "IFCREAL"
+                return "IFCLABEL"
+            # if op/bounds -> numeric
+            if op or any(v is not None for v in bounds.values()):
+                return "IFCREAL"
+            # booleans
+            if _is_bool_like(value): return "IFCBOOLEAN"
+            # literal numbers
+            if _is_number_like(value):
+                try:
+                    iv = int(str(value))
+                    if float(str(value)) == float(iv): return "IFCINTEGER"
+                except Exception:
+                    pass
+                return "IFCREAL"
+            # text
+            return "IFCLABEL"
+
+        # (optional) Absorption of PredefinedType into Entity.predefinedType — DISABLED
+        def _absorb_predefined_type(applicability_list: list):
+            """
+            Usage:
+                Transfers the value of a PREDEFINEDTYPE attribute into the corresponding Entity's 
+                predefinedType field within the applicability list. 
+                This operation effectively absorbs the PREDEFINEDTYPE entry into the Entity definition.
+            Inputs:
+                applicability_list (list): List of facet dictionaries containing 'Entity' and 'Attribute' definitions.
+            Output:
+                list: The updated applicability list where the PREDEFINEDTYPE value has been moved 
+                    to the Entity's 'predefinedType' field, if applicable. 
+                    Returns the original list if no valid Entity or PREDEFINEDTYPE attribute is found.
+            """
+            if not isinstance(applicability_list, list): return applicability_list
+            idx = next((i for i,f in enumerate(applicability_list) if (f.get("type") == "Entity")), None)
+            if idx is None: return applicability_list
+            for i,f in enumerate(list(applicability_list)):
+                if f.get("type") == "Attribute" and str(f.get("name","")).strip().upper() == "PREDEFINEDTYPE":
+                    val = f.get("value")
+                    if val not in (None, ""):
+                        applicability_list[idx]["predefinedType"] = val
+                        applicability_list.pop(i)
+                        break
+            return applicability_list
+
+        # IDS Root 
+        # -----------------------------------------------------------------------------------------------------------
+        try:
+            ids_root = ids.Ids(
+                title=(title or "Untitled"),
+                description=(description or None),
+                author=(author or None),
+                version=(str(ids_version) if ids_version else None),
+                purpose=(purpose or None),
+                milestone=(milestone or None),
+                date=(date_iso or datetime.date.today().isoformat()),
+            )
+            try: ids_root.title = (title or "Untitled")
+            except Exception: pass
+            try: ids_root.info.title = (title or "Untitled")
+            except Exception: pass
+        except Exception as e:
+            return {"ok": False, "error": "Could not initialize the IDS", "details": str(e)}
+
+        # Facets (with context)
+        # -----------------------------------------------------------------------------------------------------------
+        def _facet_from_dict(f, spec_desc: str | None, context: str):
+            """
+            Usage:
+                Builds an IDS facet object (e.g., Entity, Attribute, Property, Material, Classification, or PartOf)
+                from a dictionary definition. Handles data normalization, type inference, comparison extraction,
+                and restriction creation for both applicability and requirements contexts.
+            Inputs:
+                f (dict): Dictionary describing a facet, including its type and relevant attributes.
+                spec_desc (str | None): Optional specification description used to infer operators or targets
+                                        when not explicitly provided.
+                context (str): Indicates the facet context, either 'applicability' or 'requirements'.
+                            Only in 'requirements' can operator/target be extracted from the description.
+            Output:
+                ids.Entity | ids.Attribute | ids.Property | ids.Material | ids.Classification | ids.PartOf:
+                    Returns the corresponding ids.* object based on the facet type.
+            Exceptions:
+                ValueError: Raised if the facet type is unsupported or required fields are missing
+                            (e.g., Property without propertySet or baseName, Attribute without name).
+            """    
+                        
+            t = (f.get("type") or "").strip()
+
+            if t == "Entity":
+                ent_name = f.get("name", "") or f.get("entity", "") or f.get("Name", "")
+                ent_name = ent_name.strip()
+                if ent_name.lower().startswith("ifc") and not ent_name.isupper():
+                    ent_name = ent_name.upper()  # 'IfcWall' -> 'IFCWALL'
+                return ids.Entity(
+                    name=ent_name,
+                    predefinedType=f.get("predefinedType", ""),  # we keep it separate (not absorbed)
+                    instructions=f.get("instructions", ""),
+                )
+
+            elif t == "Attribute":
+                name = f.get("name") or f.get("Name")
+                if not name: raise ValueError("Attribute requires 'name'.")
+                kwargs = dict(name=name)
+                if f.get("value") not in (None, ""):
+                    val = f["value"]
+                    if _is_bool_like(val):
+                        tok = _to_bool_token(val)
+                        kwargs["value"] = tok if tok else val
+                    else:
+                        kwargs["value"] = val
+                # Cardinality from occurs
+                card = _card_from_occurs(f.get("minOccurs"), f.get("maxOccurs"))
+                if card: kwargs["cardinality"] = card
+                if f.get("cardinality"): kwargs["cardinality"] = _norm_card(f.get("cardinality"))
+                if f.get("instructions"): kwargs["instructions"] = f["instructions"]
+                return ids.Attribute(**kwargs)
+
+            elif t == "Property":
+                pset = f.get("propertySet") or f.get("pset") or f.get("psetName")
+                base = f.get("baseName") or f.get("name") or f.get("Name")
+                if not pset or not base: raise ValueError("Property requires 'propertySet' and 'baseName'.")
+
+                val_in = f.get("value", None)
+                bounds = {
+                    "minInclusive": f.get("minInclusive"),
+                    "maxInclusive": f.get("maxInclusive"),
+                    "minExclusive": f.get("minExclusive"),
+                    "maxExclusive": f.get("maxExclusive"),
+                }
+                # minValue/maxValue + inclusivity
+                if f.get("minValue") is not None:
+                    if bool(f.get("minInclusive")): bounds["minInclusive"] = f.get("minValue")
+                    else:                            bounds["minExclusive"] = f.get("minValue")
+                if f.get("maxValue") is not None:
+                    if bool(f.get("maxInclusive")): bounds["maxInclusive"] = f.get("maxValue")
+                    else:                            bounds["maxExclusive"] = f.get("maxValue")
+
+                if isinstance(val_in, dict):
+                    for k in ("minInclusive","maxInclusive","minExclusive","maxExclusive"):
+                        if k in val_in and bounds.get(k) is None:
+                            bounds[k] = val_in[k]
+
+                # explicit operator
+                op = f.get("op") or f.get("operator") or f.get("comparison") or f.get("cmp") or f.get("relation")
+                target = f.get("target") or f.get("threshold") or f.get("limit")
+
+                # operator in 'value' string ("> 30")
+                if target is None and isinstance(val_in, str):
+                    _op2, _tg2 = _extract_op_target_from_string(val_in)
+                    if _op2 and _tg2 is not None:
+                        op, target, val_in = _op2, _tg2, None
+
+                # ONLY IN REQUIREMENTS: extract from description
+                if context == "requirements" and (not op and all(v is None for v in bounds.values()) and target is None and spec_desc):
+                    _op3, _tg3 = _extract_from_description(spec_desc)
+                    if _op3 and _tg3 is not None:
+                        op, target = _op3, _tg3
+
+                # cardinality from occurs
+                card = _card_from_occurs(f.get("minOccurs"), f.get("maxOccurs"))
+
+                dt = _infer_ids_datatype(pset, base, f.get("dataType"), val_in, op, bounds)
+
+                # boolean normalization
+                if _is_bool_like(val_in):
+                    tok = _to_bool_token(val_in)
+                    if tok is not None:
+                        val_in = tok
+                        if not dt: dt = "IFCBOOLEAN"
+
+                # Restriction when applicable
+                restriction_obj = None
+                if op or any(v is not None for v in bounds.values()):
+                    if dt in ("IFCLABEL","IFCTEXT"):
+                        restriction_obj = _build_restriction_for_text(op, target if target is not None else val_in, bounds)
+                    else:
+                        restriction_obj = _build_numeric_restriction(dt, op, target if target is not None else val_in, bounds)
+                if isinstance(val_in, ids.Restriction):
+                    restriction_obj = val_in
+
+                kwargs = dict(propertySet=pset, baseName=base)
+                if restriction_obj is not None:
+                    kwargs["value"] = restriction_obj
+                    if dt: kwargs["dataType"] = dt
+                else:
+                    if val_in not in (None, ""): kwargs["value"] = val_in
+                    if dt: kwargs["dataType"] = dt
+
+                if f.get("uri"): kwargs["uri"] = f["uri"]
+                if f.get("instructions"): kwargs["instructions"] = f["instructions"]
+                if card: kwargs["cardinality"] = card
+                if f.get("cardinality"): kwargs["cardinality"] = _norm_card(f.get("cardinality"))
+                if (op or any(v is not None for v in bounds.values())) and "cardinality" not in kwargs:
+                    kwargs["cardinality"] = "required"
+
+                return ids.Property(**kwargs)
+
+            elif t == "Material":
+                kwargs = {}
+                if f.get("value"): kwargs["value"] = f["value"]
+                if f.get("uri"): kwargs["uri"] = f["uri"]
+                if f.get("cardinality"): kwargs["cardinality"] = _norm_card(f["cardinality"])
+                if f.get("instructions"): kwargs["instructions"] = f["instructions"]
+                return ids.Material(**kwargs)
+
+            elif t == "Classification":
+                return ids.Classification(
+                    value=f.get("value", ""),
+                    system=f.get("system", ""),
+                    uri=f.get("uri", ""),
+                    cardinality=_norm_card(f.get("cardinality")),
+                    instructions=f.get("instructions", ""),
+                )
+
+            elif t == "PartOf":
+                return ids.PartOf(
+                    name=f.get("name", ""),
+                    predefinedType=f.get("predefinedType", ""),
+                    relation=f.get("relation", ""),
+                    cardinality=_norm_card(f.get("cardinality")),
+                    instructions=f.get("instructions", ""),
+                )
+
+            else:
+                raise ValueError(f"Unsupported or empty facet type: '{t}'.")
+
+        # Construction
+        # -----------------------------------------------------------------------------------------------------------
+        total_specs = total_app = total_req = 0
+        try:
+            for s in specs:
+                if not isinstance(s, dict):
+                    raise ValueError("Each 'spec' must be a dict.")
+                applicability = s.get("applicability", [])
+                requirements  = s.get("requirements", [])
+                if not isinstance(applicability, list) or not isinstance(requirements, list):
+                    raise ValueError("'applicability' and 'requirements' must be lists.")
+
+                # Do NOT absorb PredefinedType (it remains as an Attribute in applicability)
+                # applicability = _absorb_predefined_type(applicability)
+
+                spec_obj = ids.Specification()
+                if s.get("name"):
+                    try: spec_obj.name = s["name"]
+                    except Exception: pass
+                if s.get("description"):
+                    try: spec_obj.description = s["description"]
+                    except Exception: pass
+
+                # ifcVersion: use the provided one; if not, default to IFC4
+                canon = _norm_ifc_version(s.get("ifcVersion") or "IFC4")
+                try: spec_obj.ifcVersion = canon
+                except Exception: pass
+
+                for f in applicability:
+                    facet = _facet_from_dict(f, s.get("description"), context="applicability")
+                    spec_obj.applicability.append(facet); total_app += 1
+
+                for f in requirements:
+                    facet = _facet_from_dict(f, s.get("description"), context="requirements")
+                    spec_obj.requirements.append(facet); total_req += 1
+
+                ids_root.specifications.append(spec_obj); total_specs += 1
+
+        except Exception as e:
+            return {"ok": False, "error": "Error while building the IDS specifications", "details": str(e)}
+
+        if total_specs == 0:
+            return {"ok": False, "error": "No Specification was created. Check 'specs'."}
+
+        # Saved
+        # -----------------------------------------------------------------------------------------------------------
+        try:
+            if not output_path:
+                safe_title = "".join(c for c in title if c.isalnum() or c in (" ","-","_")).rstrip() or "ids"
+                today = (date_iso if date_iso else datetime.date.today().isoformat())
+                output_path = os.path.abspath(f"{safe_title}_{today}.ids")
+            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+            ids_root.to_xml(output_path)
+        except Exception as e:
+            return {"ok": False, "error": "Could not save the IDS file", "details": str(e)}
+
+        return {
+            "ok": True,
+            "output_path": output_path,
+            "message": f"IDS '{title}' generated. Specs: {total_specs}, facets: {total_app} appl. / {total_req} req."
+        }
     
     #endregion
 

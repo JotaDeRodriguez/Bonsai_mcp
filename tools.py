@@ -972,6 +972,82 @@ def georeference_ifc_model(
             indent=2,
         )
 
+@mcp.tool()
+def generate_ids(
+    title: str,
+    specs: Union[List[dict], str],  # accepts a list of dicts or a JSON string
+    description: str = "",
+    author: str = "",
+    ids_version: Union[str, float] = "",    # IDS version (Not IFC version)
+    purpose: str = "",
+    milestone: str = "",
+    date_iso: str = None,
+    output_path: str = None,    
+) -> str:
+    """
+    Creates an .ids file in Blender/Bonsai by calling the add-on handler 'generate_ids'.
+
+    Parameters:
+      - title (str): Title of the IDS.
+      - specs (list | JSON str): List of 'specs' containing 'applicability' and 'requirements'.
+        Each facet is a dict with at least a 'type' field ("Entity", "Attribute", "Property",
+        "Material", "Classification", "PartOf") and its corresponding attributes.
+      - description, author, ids_version, date_iso, purpose, milestone: IDS metadata fields.
+      - output_path (str): Full path to the .ids file to be created. If omitted, the add-on will generate a default name.
+
+    Returns:
+      - JSON (str) with the handler result: {"ok": bool, "output_path": "...", "message": "..."} 
+        or {"ok": False, "error": "..."}
+    """
+
+    blender = get_blender_connection()
+
+    # Allow 'specs' to be received as JSON text (convenient when the client builds it as a string)
+    if isinstance(specs, str):
+        try:
+            specs = json.loads(specs)
+        except Exception as e:
+            return json.dumps(
+                {"ok": False, "error": "Argument 'specs' is not a valid JSON", "details": str(e)},
+                ensure_ascii=False, indent=2
+            )
+
+    # Basic validations to avoid sending garbage to the add-on
+    if not isinstance(title, str) or not title.strip():
+        return json.dumps({"ok": False, "error": "Empty or invalid 'title' parameter."},
+                          ensure_ascii=False, indent=2)
+    if not isinstance(specs, list) or not specs:
+        return json.dumps({"ok": False, "error": "You must provide at least one 'spec' in 'specs'."},
+                          ensure_ascii=False, indent=2)
+
+    # Safe coercion of ids_version to str
+    if ids_version is not None and not isinstance(ids_version, str):
+        ids_version = str(ids_version)
+
+    params: dict[str, Any] = {
+        "title": title,
+        "specs": specs,
+        "description": description,
+        "author": author,
+        "ids_version": ids_version,   # ← the handler maps it to the 'version' field of the IDS
+        "date_iso": date_iso,
+        "output_path": output_path,
+        "purpose": purpose,
+        "milestone": milestone,
+    }
+
+    # Cleanup: remove keys with None values to keep the payload clean
+    params = {k: v for k, v in params.items() if v is not None}
+
+    try:
+        # Assignment name must match EXACTLY the one in addon.py
+        result = blender.send_command("generate_ids", params)
+        # Returns JSON 
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return json.dumps({"ok": False, "error": "Fallo al crear IDS", "details": str(e)},
+                          ensure_ascii=False, indent=2)
+
 
 # -------------------------------
 # MCP RESOURCES
