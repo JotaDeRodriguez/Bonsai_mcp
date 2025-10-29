@@ -6,7 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Dict, Any, List, TypedDict
+from typing import AsyncIterator, Dict, Any, List, TypedDict, Union
 import os
 from pathlib import Path
 import base64
