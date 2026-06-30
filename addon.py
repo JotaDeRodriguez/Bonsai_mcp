@@ -395,13 +395,13 @@ class BlenderMCPServer:
             if not entity_type:
                 # If no type specified, list available entity types
                 entity_types = {}
-                for entity in file.wrapped_data.entities:
+                for entity in file:
                     entity_type = entity.is_a()
                     if entity_type in entity_types:
                         entity_types[entity_type] += 1
                     else:
                         entity_types[entity_type] = 1
-                
+
                 return {
                     "available_types": [{"type": k, "count": v} for k, v in entity_types.items()]
                 }
