@@ -196,7 +196,6 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 # Create the MCP server with lifespan support
 mcp = FastMCP(
     "Bonsai MCP",
-    description="IFC manipulation through Blender and MCP",
     lifespan=server_lifespan
 )
 

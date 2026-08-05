@@ -3,10 +3,11 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Copy your application files
-COPY tools.py /app/
+COPY tools.py bc3_writer.py /app/
 
 # Install dependencies
-RUN pip install mcpo uv
+# Pin mcp < 2.0.0: mcp 2.0.0 removed streamablehttp_client, which mcpo imports.
+RUN pip install "mcpo" "mcp[cli]<2.0.0"
 
 # Set environment variables with defaults
 ENV MCP_HOST="0.0.0.0"
@@ -24,8 +25,8 @@ sed -i "s/host=\"localhost\"/host=\"$BLENDER_HOST\"/g" tools.py\n\
 sed -i "s/host='\''localhost'\''/host='\''$BLENDER_HOST'\''/g" tools.py\n\
 # Print the modification for debugging\n\
 echo "Modified Blender host to: $BLENDER_HOST"\n\
-# Run the MCPO server\n\
-uvx mcpo --host $MCP_HOST --port $MCP_PORT -- python tools.py\n\
+# Run the MCPO server (use the pip-installed mcpo so the mcp<2.0.0 pin applies)\n\
+mcpo --host $MCP_HOST --port $MCP_PORT -- python tools.py\n\
 ' > /app/start.sh && chmod +x /app/start.sh
 
 # Run the startup script
