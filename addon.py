@@ -15,7 +15,23 @@ import base64
 import bpy
 
 import ifcopenshell
-from bonsai.bim.ifc import IfcStore
+import ifcopenshell.util.element
+
+
+class _LazyIfcStore:
+    """Resolve bonsai's IfcStore on first use instead of at import time.
+
+    Blender loads legacy add-ons before it registers extensions, so importing
+    ``bonsai.bim`` here would fail (Bonsai sets REGISTERED_BBIM_PACKAGE during
+    its own registration) and abort this add-on's registration entirely.
+    """
+
+    def __getattr__(self, name):
+        from bonsai.bim.ifc import IfcStore as _IfcStore
+        return getattr(_IfcStore, name)
+
+
+IfcStore = _LazyIfcStore()
 
 bl_info = {
     "name": "Bonsai MCP",
