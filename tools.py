@@ -902,28 +902,28 @@ def get_ifc_georeferencing_info(include_contexts: bool = False) -> str:
 @mcp.tool()
 def georeference_ifc_model(
     crs_mode: str,
-    epsg: int = None,
-    crs_name: str = None,
-    geodetic_datum: str = None,
-    map_projection: str = None,
-    map_zone: str = None,
-    eastings: float = None,
-    northings: float = None,
+    epsg: int | None = None,
+    crs_name: str | None = None,
+    geodetic_datum: str | None = None,
+    map_projection: str | None = None,
+    map_zone: str | None = None,
+    eastings: float | None = None,
+    northings: float | None = None,
     orthogonal_height: float = 0.0,
     scale: float = 1.0,
-    x_axis_abscissa: float = None,
-    x_axis_ordinate: float = None,
-    true_north_azimuth_deg: float = None,
+    x_axis_abscissa: float | None = None,
+    x_axis_ordinate: float | None = None,
+    true_north_azimuth_deg: float | None = None,
     context_filter: str = "Model",
-    context_index: int = None,
-    site_ref_latitude: list = None,      # [deg, min, sec, millionth]
-    site_ref_longitude: list = None,     # [deg, min, sec, millionth]
-    site_ref_elevation: float = None,
-    site_ref_latitude_dd: float = None,  # Decimal degrees (optional)
-    site_ref_longitude_dd: float = None, # Decimal degrees (optional)
+    context_index: int | None = None,
+    site_ref_latitude: list | None = None,      # [deg, min, sec, millionth]
+    site_ref_longitude: list | None = None,     # [deg, min, sec, millionth]
+    site_ref_elevation: float | None = None,
+    site_ref_latitude_dd: float | None = None,  # Decimal degrees (optional)
+    site_ref_longitude_dd: float | None = None, # Decimal degrees (optional)
     overwrite: bool = False,
     dry_run: bool = False,
-    write_path: str = None,
+    write_path: str | None = None,
 ) -> str:
     """
     Georeferences the IFC currently opened in Bonsai/BlenderBIM by creating or 
@@ -981,8 +981,8 @@ def generate_ids(
     ids_version: Union[str, float] = "",    # IDS version (Not IFC version)
     purpose: str = "",
     milestone: str = "",
-    date_iso: str = None,
-    output_path: str = None,    
+    date_iso: str | None = None,
+    output_path: str | None = None,    
 ) -> str:
     """
     Creates an .ids file in Blender/Bonsai by calling the add-on handler 'generate_ids'.
